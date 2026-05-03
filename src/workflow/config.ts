@@ -1,0 +1,91 @@
+import { resolve } from "node:path";
+import { tmpdir, homedir } from "node:os";
+import { serviceConfigSchema, type ServiceConfig } from "../model/index.ts";
+import { ConfigValidationError } from "../errors/errors.ts";
+import { logger } from "../logging/logger.ts";
+
+export function resolveEnvValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (!value.startsWith("$")) return value;
+  const varName = value.slice(1);
+  const resolved = process.env[varName];
+  if (resolved === "" || resolved === undefined) return undefined;
+  return resolved;
+}
+
+export function expandPath(pathStr: string, baseDir: string): string {
+  let expanded = pathStr;
+  if (expanded.startsWith("~")) {
+    expanded = expanded.replace(/^~/, homedir());
+  }
+  if (!expanded.startsWith("/")) {
+    expanded = resolve(baseDir, expanded);
+  }
+  return expanded;
+}
+
+export function buildServiceConfig(
+  rawConfig: Record<string, unknown>,
+  workflowDir: string,
+): ServiceConfig {
+  // Resolve $VAR indirection in known env-backed fields
+  const config = { ...rawConfig };
+
+  if (config.tracker && typeof config.tracker === "object") {
+    const tracker = config.tracker as Record<string, unknown>;
+    if (typeof tracker.api_key === "string") {
+      tracker.api_key = resolveEnvValue(tracker.api_key) as string | undefined;
+    }
+    if (typeof tracker.app_id === "string") {
+      tracker.app_id = resolveEnvValue(tracker.app_id) as string | undefined;
+    }
+    if (typeof tracker.app_secret === "string") {
+      tracker.app_secret = resolveEnvValue(tracker.app_secret) as string | undefined;
+    }
+  }
+
+  if (config.workspace && typeof config.workspace === "object") {
+    const workspace = config.workspace as Record<string, unknown>;
+    if (typeof workspace.root === "string") {
+      workspace.root = expandPath(workspace.root, workflowDir);
+    }
+  }
+
+  const parsed = serviceConfigSchema.safeParse(config);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    logger.error({ errors: issues }, "Config validation failed");
+    throw new ConfigValidationError(`Invalid config: ${issues}`);
+  }
+
+  // Apply workspace root default after parsing
+  const svc = parsed.data;
+  if (!svc.workspace.root) {
+    svc.workspace.root = resolve(tmpdir(), "symphony_workspaces");
+  }
+
+  return svc;
+}
+
+export function validateDispatchConfig(config: ServiceConfig): string | null {
+  if (!config.tracker.kind) {
+    return "tracker.kind is required";
+  }
+  if (config.tracker.kind === "feishu_bitable") {
+    if (!config.tracker.app_token) return "tracker.app_token is required for feishu_bitable";
+    if (!config.tracker.table_id) return "tracker.table_id is required for feishu_bitable";
+    if (!config.tracker.app_id) return "tracker.app_id ($FEISHU_APP_ID) is required";
+    if (!config.tracker.app_secret) return "tracker.app_secret ($FEISHU_APP_SECRET) is required";
+    if (!config.tracker.state_field) return "tracker.state_field is required for feishu_bitable";
+    if (!config.tracker.identifier_field) return "tracker.identifier_field is required for feishu_bitable";
+    if (!config.tracker.title_field) return "tracker.title_field is required for feishu_bitable";
+  }
+  if (config.tracker.kind === "linear") {
+    if (!config.tracker.api_key) return "tracker.api_key ($LINEAR_API_KEY) is required";
+    if (!config.tracker.project_slug) return "tracker.project_slug is required for linear";
+  }
+  // Check agent command availability
+  const agentCommand = config.codex.command;
+  if (!agentCommand) return "codex.command is required";
+  return null;
+}

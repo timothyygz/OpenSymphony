@@ -1,0 +1,59 @@
+---
+tracker:
+  kind: feishu_bitable
+  app_id: <your_app_id>
+  app_secret: <your_app_secret>
+  app_token: "<your_app_token>"
+  table_id: "<your_table_id>"
+  state_field: "状态"
+  identifier_field: "编号"
+  title_field: "标题"
+  description_field: "描述"
+  priority_field: "优先级"
+  labels_field: "标签"
+  active_states: ["待处理"]
+  terminal_states: ["已完成", "已取消", "已关闭"]
+
+polling:
+  interval_ms: 30000
+
+workspace:
+  root: "/tmp/symphony_workspaces"
+
+hooks:
+  after_create: |
+    echo "Workspace created for issue"
+  before_run: |
+    echo "Starting work on issue"
+
+agent:
+  max_concurrent_agents: 5
+  max_turns: 20
+  max_retry_backoff_ms: 300000
+
+claude_code:
+  command: claude
+  timeout_ms: 3600000
+  approval_policy: auto
+---
+
+You are an AI coding assistant working on issue {{ issue.identifier }}: {{ issue.title }}.
+
+## Issue Description
+{{ issue.description }}
+
+## Current State
+- State: {{ issue.state }}
+- Priority: {{ issue.priority }}
+- Labels: {{ issue.labels | join: ", " }}
+
+## Instructions
+1. Read the issue description carefully.
+2. Implement the required changes in the current workspace.
+3. Write tests for your changes.
+4. Ensure all existing tests pass.
+5. If the task is complete, update the tracker state to "已完成".
+
+{% if attempt %}
+This is retry attempt #{{ attempt }}. Previous work may exist in the workspace.
+{% endif %}
