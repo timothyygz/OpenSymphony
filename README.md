@@ -1,4 +1,4 @@
-# Symphony Demo
+# OpenSymphony
 
 基于 [OpenAI Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) 的编码 Agent 编排服务，使用 Claude Code 替代 Codex，飞书多维表格替代 Linear。
 
