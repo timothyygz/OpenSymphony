@@ -1,4 +1,4 @@
-import type { Issue } from "../../model/index.ts";
+import type { Issue, TokenUsage } from "../../model/index.ts";
 
 export interface TrackerAdapter {
   readonly kind: string;
@@ -6,6 +6,7 @@ export interface TrackerAdapter {
   fetchIssuesByStates(states: string[]): Promise<Issue[]>;
   fetchIssueStatesByIds(ids: string[]): Promise<Issue[]>;
   updateIssueState(issueId: string, state: string): Promise<void>;
+  updateIssueTokens(issueId: string, tokens: TokenUsage): Promise<void>;
 }
 
 export type TrackerAdapterFactory = (config: Record<string, unknown>) => TrackerAdapter;

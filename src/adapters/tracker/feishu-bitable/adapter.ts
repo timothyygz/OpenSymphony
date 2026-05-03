@@ -1,5 +1,5 @@
 import type { TrackerAdapter } from "../types.ts";
-import type { Issue } from "../../../model/index.ts";
+import type { Issue, TokenUsage } from "../../../model/index.ts";
 import { FeishuAuth } from "./auth.ts";
 import { FeishuBitableApi } from "./api.ts";
 import { mapRecordToIssue, type FieldMapping } from "./mapper.ts";
@@ -16,6 +16,7 @@ export interface FeishuBitableConfig {
   descriptionField: string;
   priorityField?: string;
   labelsField?: string;
+  tokensField?: string;
   activeStates: string[];
   terminalStates: string[];
 }
@@ -25,6 +26,7 @@ export class FeishuBitableAdapter implements TrackerAdapter {
   private readonly auth: FeishuAuth;
   private readonly api: FeishuBitableApi;
   private readonly fieldMapping: FieldMapping;
+  private readonly tokensField: string | undefined;
   private readonly activeStates: string[];
   private readonly terminalStates: string[];
 
@@ -39,6 +41,7 @@ export class FeishuBitableAdapter implements TrackerAdapter {
       priorityField: config.priorityField,
       labelsField: config.labelsField,
     };
+    this.tokensField = config.tokensField;
     this.activeStates = config.activeStates.map((s) => s.trim());
     this.terminalStates = config.terminalStates.map((s) => s.trim());
   }
@@ -89,6 +92,12 @@ export class FeishuBitableAdapter implements TrackerAdapter {
     await this.api.updateRecord(issueId, { [this.fieldMapping.stateField]: state });
     logger.info({ issueId, state }, "Updated issue state in tracker");
   }
+
+  async updateIssueTokens(issueId: string, tokens: TokenUsage): Promise<void> {
+    if (!this.tokensField) return;
+    await this.api.updateRecord(issueId, { [this.tokensField]: tokens.totalTokens });
+    logger.info({ issueId, totalTokens: tokens.totalTokens }, "Updated issue tokens in tracker");
+  }
 }
 
 export function createFeishuBitableAdapter(rawConfig: Record<string, unknown>): TrackerAdapter {
@@ -103,6 +112,7 @@ export function createFeishuBitableAdapter(rawConfig: Record<string, unknown>): 
     descriptionField: (rawConfig.description_field as string) ?? "描述",
     priorityField: rawConfig.priority_field as string | undefined,
     labelsField: rawConfig.labels_field as string | undefined,
+    tokensField: rawConfig.tokens_field as string | undefined,
     activeStates: (rawConfig.active_states as string[]) ?? ["待处理", "进行中"],
     terminalStates: (rawConfig.terminal_states as string[]) ?? ["已完成", "已取消"],
   });

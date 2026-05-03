@@ -58,6 +58,10 @@ async function main() {
     hooks: config.hooks,
   });
 
+  const { TokenLog } = await import("./metrics/token-log.ts");
+  const tokenLogPath = resolvedPath.substring(0, resolvedPath.lastIndexOf("/")) + "/.symphony-tokens.jsonl";
+  const tokenLog = new TokenLog(tokenLogPath);
+
   // Create orchestrator
   const orchestrator = new Orchestrator({
     config,
@@ -65,6 +69,7 @@ async function main() {
     tracker,
     agent,
     workspaceManager,
+    tokenLog,
   });
 
   // Dashboard (TUI mode)

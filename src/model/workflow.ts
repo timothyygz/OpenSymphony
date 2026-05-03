@@ -25,6 +25,7 @@ export const trackerConfigSchema = z.object({
   description_field: z.string().optional(),
   priority_field: z.string().optional(),
   labels_field: z.string().optional(),
+  tokens_field: z.string().optional(),
 });
 export type TrackerConfig = z.infer<typeof trackerConfigSchema>;
 

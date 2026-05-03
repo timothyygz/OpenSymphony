@@ -40,13 +40,25 @@ function extractMessage(parsed: StreamJsonEvent): string | undefined {
 }
 
 function extractUsage(parsed: StreamJsonEvent): TokenUsage | undefined {
-  const usage = parsed.usage ?? parsed.tokenUsage;
-  if (!usage || typeof usage !== "object") return undefined;
+  const raw = parsed.usage ?? parsed.tokenUsage ?? parsed.modelUsage;
+  if (!raw || typeof raw !== "object") return undefined;
 
-  const u = usage as Record<string, unknown>;
-  return {
-    inputTokens: typeof u.inputTokens === "number" ? u.inputTokens : (typeof u.input_tokens === "number" ? u.input_tokens : 0),
-    outputTokens: typeof u.outputTokens === "number" ? u.outputTokens : (typeof u.output_tokens === "number" ? u.output_tokens : 0),
-    totalTokens: typeof u.totalTokens === "number" ? u.totalTokens : (typeof u.total_tokens === "number" ? u.total_tokens : 0),
-  };
+  // modelUsage is keyed by model name, e.g. { "glm-5.1": { inputTokens, ... } }
+  const u = (typeof (raw as Record<string, unknown>).modelUsage === "object")
+    ? ((raw as Record<string, Record<string, unknown>>).modelUsage as Record<string, Record<string, unknown>>)
+    : (raw as Record<string, unknown>);
+
+  // If still keyed by model name, take first entry
+  const src = ("inputTokens" in u || "input_tokens" in u)
+    ? u
+    : Object.values(u)[0] as Record<string, unknown> | undefined;
+  if (!src) return undefined;
+
+  const inputTokens = typeof src.inputTokens === "number" ? src.inputTokens : (typeof src.input_tokens === "number" ? src.input_tokens : 0);
+  const outputTokens = typeof src.outputTokens === "number" ? src.outputTokens : (typeof src.output_tokens === "number" ? src.output_tokens : 0);
+  const totalTokens = typeof src.totalTokens === "number" ? src.totalTokens : (typeof src.total_tokens === "number" ? src.total_tokens : inputTokens + outputTokens);
+
+  if (inputTokens === 0 && outputTokens === 0) return undefined;
+
+  return { inputTokens, outputTokens, totalTokens };
 }

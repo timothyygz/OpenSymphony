@@ -33,6 +33,8 @@ class MockTracker implements TrackerAdapter {
 
   async updateIssueState(): Promise<void> {}
 
+  async updateIssueTokens(): Promise<void> {}
+
   async fetchIssueStatesByIds(ids: string[]): Promise<Issue[]> {
     return this.issues.filter((i) => ids.includes(i.id));
   }

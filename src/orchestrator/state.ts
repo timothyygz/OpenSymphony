@@ -50,6 +50,12 @@ export function addRuntimeSeconds(state: OrchestratorState, entry: RunningEntry)
   state.aggregateTotals.secondsRunning += elapsed;
 }
 
+export function addTokenUsage(state: OrchestratorState, entry: RunningEntry): void {
+  state.aggregateTotals.inputTokens += entry.tokenUsage.inputTokens;
+  state.aggregateTotals.outputTokens += entry.tokenUsage.outputTokens;
+  state.aggregateTotals.totalTokens += entry.tokenUsage.totalTokens;
+}
+
 export function effectiveSecondsRunning(state: OrchestratorState): number {
   const ended = state.aggregateTotals.secondsRunning;
   const active = [...state.running.values()].reduce(

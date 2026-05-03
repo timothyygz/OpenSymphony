@@ -4,12 +4,13 @@ import type { AgentAdapter, AgentEvent, AgentSession } from "../adapters/agent/t
 import { WorkspaceManager } from "../workspace/manager.ts";
 import { renderTemplate, buildContinuationGuidance } from "../workflow/prompt.ts";
 import { runHookIfConfigured, runHookBestEffort } from "../workspace/hooks.ts";
-import { createInitialState, isActiveState, isTerminalState, addRuntimeSeconds } from "./state.ts";
+import { createInitialState, isActiveState, isTerminalState, addRuntimeSeconds, addTokenUsage } from "./state.ts";
 import type { OrchestratorState } from "./state.ts";
 import { sortForDispatch, canDispatch, availableSlots } from "./dispatch.ts";
 import { scheduleRetry, cancelRetry } from "./retry.ts";
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
+import type { TokenLog } from "../metrics/token-log.ts";
 
 export interface OrchestratorDeps {
   config: ServiceConfig;
@@ -17,6 +18,7 @@ export interface OrchestratorDeps {
   tracker: TrackerAdapter;
   agent: AgentAdapter;
   workspaceManager: WorkspaceManager;
+  tokenLog?: TokenLog;
 }
 
 export class Orchestrator {
@@ -273,6 +275,7 @@ export class Orchestrator {
         // The running entry will be cleaned up when the worker eventually exits.
         this.state.running.delete(issueId);
         addRuntimeSeconds(this.state, entry);
+        this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issueId);
         scheduleRetry(
           this.state,
@@ -310,6 +313,7 @@ export class Orchestrator {
         logger.info({ issueId: issue.id, state: issue.state }, "Issue is terminal, terminating worker");
         this.state.running.delete(issue.id);
         addRuntimeSeconds(this.state, entry);
+        this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issue.id);
         this.deps.workspaceManager.cleanupWorkspace(issue.identifier).catch(() => {});
       } else if (isActiveState(issue.state, activeStates)) {
@@ -320,9 +324,35 @@ export class Orchestrator {
         logger.info({ issueId: issue.id, state: issue.state }, "Issue is non-active, stopping worker");
         this.state.running.delete(issue.id);
         addRuntimeSeconds(this.state, entry);
+        this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issue.id);
       }
     }
+  }
+
+  private finalizeWorkerTokens(entry: RunningEntry): void {
+    addTokenUsage(this.state, entry);
+
+    if (this.deps.tokenLog) {
+      try {
+        this.deps.tokenLog.append({
+          identifier: entry.identifier,
+          issueId: entry.issue.id,
+          inputTokens: entry.tokenUsage.inputTokens,
+          outputTokens: entry.tokenUsage.outputTokens,
+          totalTokens: entry.tokenUsage.totalTokens,
+          turns: entry.turnCount,
+          retryAttempt: entry.retryAttempt,
+          completedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        logger.warn({ identifier: entry.identifier, error: String(err) }, "Token log write failed");
+      }
+    }
+
+    this.deps.tracker.updateIssueTokens(entry.issue.id, entry.tokenUsage).catch((err) => {
+      logger.warn({ issueId: entry.issue.id, error: String(err) }, "Token tracker update failed");
+    });
   }
 
   // T31: Worker exit handler
@@ -333,6 +363,7 @@ export class Orchestrator {
     this.state.running.delete(issueId);
     this.state.claimed.delete(issueId);
     addRuntimeSeconds(this.state, entry);
+    this.finalizeWorkerTokens(entry);
 
     if (reason === "normal") {
       // Mark issue as completed in tracker
