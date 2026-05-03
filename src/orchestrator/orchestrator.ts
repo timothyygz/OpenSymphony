@@ -10,6 +10,7 @@ import { sortForDispatch, canDispatch, availableSlots } from "./dispatch.ts";
 import { scheduleRetry, cancelRetry } from "./retry.ts";
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
+import type { ExecutionLog } from "../logging/execution-log.ts";
 import type { TokenLog } from "../metrics/token-log.ts";
 
 export interface OrchestratorDeps {
@@ -19,6 +20,7 @@ export interface OrchestratorDeps {
   agent: AgentAdapter;
   workspaceManager: WorkspaceManager;
   tokenLog?: TokenLog;
+  executionLog?: ExecutionLog;
 }
 
 export class Orchestrator {
@@ -146,19 +148,52 @@ export class Orchestrator {
     cancelRetry(this.state, issue.id);
 
     // Distributed lock: mark issue as in-progress so other instances skip it
+    const fromState = issue.state;
     this.deps.tracker.updateIssueState(issue.id, this.deps.config.agent.in_progress_state).catch((err) => {
       logger.warn({ issueId: issue.id, error: String(err) }, "Failed to mark issue as in-progress");
+    });
+    this.deps.executionLog?.append({
+      event: "tracker_state_updated",
+      timestamp: new Date().toISOString(),
+      issueId: issue.id,
+      identifier: issue.identifier,
+      fromState,
+      toState: this.deps.config.agent.in_progress_state,
     });
 
     logger.info({ issueId: issue.id, identifier: issue.identifier, attempt }, "Dispatching issue");
 
+    this.deps.executionLog?.append({
+      event: "dispatch",
+      timestamp: new Date().toISOString(),
+      issueId: issue.id,
+      identifier: issue.identifier,
+      attempt: attempt ?? 0,
+    });
+
     // Run worker in background
     this.runWorker(issue, attempt, sessionId).catch((err) => {
       logger.error({ issueId: issue.id, error: String(err) }, "Worker spawn failed");
+      this.deps.executionLog?.append({
+        event: "worker_spawn_failed",
+        timestamp: new Date().toISOString(),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        error: String(err),
+      });
       this.state.running.delete(issue.id);
       this.state.claimed.delete(issue.id);
       // Reset state so retry can re-dispatch
       this.deps.tracker.updateIssueState(issue.id, this.deps.config.agent.active_reset_state).catch(() => {});
+      this.deps.executionLog?.append({
+        event: "retry_scheduled",
+        timestamp: new Date().toISOString(),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        attempt: (attempt ?? 0) + 1,
+        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
+        reason: String(err),
+      });
       scheduleRetry(
         this.state,
         issue.id,
@@ -196,6 +231,14 @@ export class Orchestrator {
       const entry = this.state.running.get(issue.id);
       if (entry) entry.sessionId = sessionId;
 
+      this.deps.executionLog?.append({
+        event: "session_started",
+        timestamp: new Date().toISOString(),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        sessionId,
+      });
+
       // Turn loop
       const maxTurns = config.agent.max_turns;
       let turnNumber = 0;
@@ -215,6 +258,14 @@ export class Orchestrator {
 
         if (turnResult.status !== "completed") {
           // Turn failed
+          this.deps.executionLog?.append({
+            event: "turn_failed",
+            timestamp: new Date().toISOString(),
+            issueId: issue.id,
+            identifier: issue.identifier,
+            turn: turnNumber,
+            error: turnResult.error ?? "unknown",
+          });
           await runHookBestEffort("after_run", hooks, workspace.path);
           await agent.stopSession(session);
           this.onWorkerExit(issue.id, "failed", turnResult.error);
@@ -224,6 +275,16 @@ export class Orchestrator {
         // Update turn count in running entry
         const e = this.state.running.get(issue.id);
         if (e) e.turnCount = turnNumber;
+
+        this.deps.executionLog?.append({
+          event: "turn_completed",
+          timestamp: new Date().toISOString(),
+          issueId: issue.id,
+          identifier: issue.identifier,
+          turn: turnNumber,
+          inputTokens: e?.tokenUsage.inputTokens ?? 0,
+          outputTokens: e?.tokenUsage.outputTokens ?? 0,
+        });
 
         // Refresh issue state from tracker
         let refreshedIssues: Issue[];
@@ -270,6 +331,23 @@ export class Orchestrator {
       const elapsed = now - lastActivity.getTime();
       if (elapsed > stallTimeoutMs) {
         logger.warn({ issueId, elapsed, stallTimeoutMs }, "Stall detected, terminating worker");
+        this.deps.executionLog?.append({
+          event: "stall_detected",
+          timestamp: new Date().toISOString(),
+          issueId,
+          identifier: entry.identifier,
+          elapsed,
+          timeout: stallTimeoutMs,
+        });
+        this.deps.executionLog?.append({
+          event: "worker_exit",
+          timestamp: new Date().toISOString(),
+          issueId,
+          identifier: entry.identifier,
+          reason: "stall",
+          turns: entry.turnCount,
+          totalTokens: entry.tokenUsage.totalTokens,
+        });
         // In Claude Code model, each turn is a separate process,
         // so stall detection is mainly a safety net.
         // The running entry will be cleaned up when the worker eventually exits.
@@ -277,6 +355,15 @@ export class Orchestrator {
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issueId);
+        this.deps.executionLog?.append({
+          event: "retry_scheduled",
+          timestamp: new Date().toISOString(),
+          issueId,
+          identifier: entry.identifier,
+          attempt: entry.retryAttempt + 1,
+          backoffMs: this.deps.config.agent.max_retry_backoff_ms,
+          reason: "stall detected",
+        });
         scheduleRetry(
           this.state,
           issueId,
@@ -311,6 +398,15 @@ export class Orchestrator {
 
       if (isTerminalState(issue.state, terminalStates)) {
         logger.info({ issueId: issue.id, state: issue.state }, "Issue is terminal, terminating worker");
+        this.deps.executionLog?.append({
+          event: "worker_exit",
+          timestamp: new Date().toISOString(),
+          issueId: issue.id,
+          identifier: entry.identifier,
+          reason: "normal",
+          turns: entry.turnCount,
+          totalTokens: entry.tokenUsage.totalTokens,
+        });
         this.state.running.delete(issue.id);
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
@@ -322,6 +418,15 @@ export class Orchestrator {
       } else {
         // Non-active, non-terminal: stop without cleanup
         logger.info({ issueId: issue.id, state: issue.state }, "Issue is non-active, stopping worker");
+        this.deps.executionLog?.append({
+          event: "worker_exit",
+          timestamp: new Date().toISOString(),
+          issueId: issue.id,
+          identifier: entry.identifier,
+          reason: "external_cancel",
+          turns: entry.turnCount,
+          totalTokens: entry.tokenUsage.totalTokens,
+        });
         this.state.running.delete(issue.id);
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
@@ -360,6 +465,16 @@ export class Orchestrator {
     const entry = this.state.running.get(issueId);
     if (!entry) return;
 
+    this.deps.executionLog?.append({
+      event: "worker_exit",
+      timestamp: new Date().toISOString(),
+      issueId,
+      identifier: entry.identifier,
+      reason,
+      turns: entry.turnCount,
+      totalTokens: entry.tokenUsage.totalTokens,
+    });
+
     this.state.running.delete(issueId);
     this.state.claimed.delete(issueId);
     addRuntimeSeconds(this.state, entry);
@@ -371,6 +486,14 @@ export class Orchestrator {
       try {
         await this.deps.tracker.updateIssueState(issueId, terminalState);
         logger.info({ issueId, state: terminalState }, "Issue marked as completed in tracker");
+        this.deps.executionLog?.append({
+          event: "tracker_state_updated",
+          timestamp: new Date().toISOString(),
+          issueId,
+          identifier: entry.identifier,
+          fromState: entry.issue.state,
+          toState: terminalState,
+        });
       } catch (err) {
         logger.warn({ issueId, error: String(err) }, "Failed to update issue state in tracker");
       }
@@ -380,9 +503,26 @@ export class Orchestrator {
       try {
         await this.deps.tracker.updateIssueState(issueId, this.deps.config.agent.active_reset_state);
         logger.info({ issueId }, "Issue reset to active state for retry");
+        this.deps.executionLog?.append({
+          event: "tracker_state_updated",
+          timestamp: new Date().toISOString(),
+          issueId,
+          identifier: entry.identifier,
+          fromState: entry.issue.state,
+          toState: this.deps.config.agent.active_reset_state,
+        });
       } catch (err) {
         logger.warn({ issueId, error: String(err) }, "Failed to reset issue state for retry");
       }
+      this.deps.executionLog?.append({
+        event: "retry_scheduled",
+        timestamp: new Date().toISOString(),
+        issueId,
+        identifier: entry.identifier,
+        attempt: entry.retryAttempt + 1,
+        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
+        reason: error ?? "worker failed",
+      });
       scheduleRetry(
         this.state,
         issueId,
@@ -407,6 +547,15 @@ export class Orchestrator {
     try {
       candidates = await this.deps.tracker.fetchCandidateIssues();
     } catch {
+      this.deps.executionLog?.append({
+        event: "retry_scheduled",
+        timestamp: new Date().toISOString(),
+        issueId,
+        identifier: retry.identifier,
+        attempt: retry.attempt + 1,
+        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
+        reason: "retry poll failed",
+      });
       scheduleRetry(
         this.state,
         issueId,
@@ -428,6 +577,15 @@ export class Orchestrator {
     }
 
     if (availableSlots(this.state, this.state.maxConcurrentAgents) <= 0) {
+      this.deps.executionLog?.append({
+        event: "retry_scheduled",
+        timestamp: new Date().toISOString(),
+        issueId,
+        identifier: retry.identifier,
+        attempt: retry.attempt + 1,
+        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
+        reason: "no available orchestrator slots",
+      });
       scheduleRetry(
         this.state,
         issueId,

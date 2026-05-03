@@ -61,6 +61,10 @@ async function main() {
   const tokenLogPath = resolvedPath.substring(0, resolvedPath.lastIndexOf("/")) + "/.symphony-tokens.jsonl";
   const tokenLog = new TokenLog(tokenLogPath);
 
+  const { ExecutionLog } = await import("./logging/execution-log.ts");
+  const executionLogPath = resolvedPath.substring(0, resolvedPath.lastIndexOf("/")) + "/.symphony-execution.jsonl";
+  const executionLog = new ExecutionLog(executionLogPath);
+
   // Create orchestrator
   const orchestrator = new Orchestrator({
     config,
@@ -69,6 +73,7 @@ async function main() {
     agent,
     workspaceManager,
     tokenLog,
+    executionLog,
   });
 
   // Dashboard (TUI mode)

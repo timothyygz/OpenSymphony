@@ -30,6 +30,9 @@ import { FeishuBitableApi } from "../src/adapters/tracker/feishu-bitable/api.ts"
 import { mapRecordToIssue, type FieldMapping } from "../src/adapters/tracker/feishu-bitable/mapper.ts";
 import type { TrackerAdapter } from "../src/adapters/tracker/types.ts";
 import type { Issue } from "../src/model/issue.ts";
+import { ExecutionLog, type ExecutionEvent } from "../src/logging/execution-log.ts";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 const FEISHU_BASE = "https://open.feishu.cn";
 
@@ -77,6 +80,7 @@ function loadConfig(workflowPath?: string): {
   config: TrackerConfig;
   adapter: TrackerAdapter;
   listAllIssues: () => Promise<Issue[]>;
+  executionLogPath: string;
 } {
   const path = resolveWorkflowPath(workflowPath);
   const { config: raw } = loadWorkflow(path);
@@ -115,7 +119,9 @@ function loadConfig(workflowPath?: string): {
     return records.map((r) => mapRecordToIssue(r, fieldMapping));
   };
 
-  return { config, adapter, listAllIssues };
+  const executionLogPath = join(dirname(path), ".symphony-execution.jsonl");
+
+  return { config, adapter, listAllIssues, executionLogPath };
 }
 
 // --- Output formatting ---
@@ -140,6 +146,59 @@ function printDetail(issue: Issue) {
   console.log(`  Description: ${issue.description ?? "(none)"}`);
   console.log(`  Created:     ${issue.createdAt?.toISOString() ?? "-"}`);
   console.log(`  Updated:     ${issue.updatedAt?.toISOString() ?? "-"}`);
+}
+
+function formatEvent(ev: ExecutionEvent): string {
+  const t = ev.timestamp.replace("T", " ").replace("Z", "").slice(0, 19);
+  switch (ev.event) {
+    case "dispatch":
+      return `${t}  DISPATCH  attempt=${ev.attempt}`;
+    case "worker_spawn_failed":
+      return `${t}  SPAWN_FAILED  error=${ev.error.slice(0, 80)}`;
+    case "session_started":
+      return `${t}  SESSION  ${ev.sessionId}`;
+    case "turn_completed":
+      return `${t}  TURN #${ev.turn} completed  tokens=${ev.inputTokens + ev.outputTokens}`;
+    case "turn_failed":
+      return `${t}  TURN #${ev.turn} FAILED  error=${ev.error.slice(0, 80)}`;
+    case "worker_exit":
+      return `${t}  EXIT  reason=${ev.reason}  turns=${ev.turns}  tokens=${ev.totalTokens}`;
+    case "stall_detected":
+      return `${t}  STALL  elapsed=${ev.elapsed}ms  timeout=${ev.timeout}ms`;
+    case "retry_scheduled":
+      return `${t}  RETRY  attempt=${ev.attempt}  backoff=${ev.backoffMs}ms  reason=${ev.reason}`;
+    case "tracker_state_updated":
+      return `${t}  STATE  ${ev.fromState} -> ${ev.toState}`;
+  }
+}
+
+async function printExecutionHistory(logPath: string, identifier: string): Promise<void> {
+  if (!existsSync(logPath)) {
+    console.log("\n  (no execution history)");
+    return;
+  }
+
+  const log = new ExecutionLog(logPath);
+  const events = await log.queryByIdentifier(identifier);
+  if (events.length === 0) {
+    console.log("\n  (no execution history)");
+    return;
+  }
+
+  console.log("\n  Execution History:");
+
+  // Group by attempt (each dispatch starts a new run)
+  let currentAttempt = -1;
+  for (const ev of events) {
+    if (ev.event === "dispatch") {
+      if (currentAttempt >= 0) {
+        console.log("  ---");
+      }
+      currentAttempt = ev.attempt;
+      console.log(`\n  Run #${ev.attempt}:`);
+    }
+    console.log(`  ${formatEvent(ev)}`);
+  }
 }
 
 // --- Create record (not in TrackerAdapter) ---
@@ -200,7 +259,7 @@ async function cmdAll(listAllIssues: () => Promise<Issue[]>) {
   console.table(issues.map(formatRow));
 }
 
-async function cmdShow(listAllIssues: () => Promise<Issue[]>, id: string) {
+async function cmdShow(listAllIssues: () => Promise<Issue[]>, executionLogPath: string, id: string) {
   const issues = await listAllIssues();
   const issue = issues.find(
     (i) => i.id === id || i.identifier.toLowerCase() === id.toLowerCase(),
@@ -210,6 +269,7 @@ async function cmdShow(listAllIssues: () => Promise<Issue[]>, id: string) {
     process.exit(1);
   }
   printDetail(issue);
+  await printExecutionHistory(executionLogPath, issue.identifier);
 }
 
 async function cmdState(adapter: TrackerAdapter, id: string, state: string) {
@@ -277,7 +337,7 @@ async function main() {
 
   const command = args[0];
   const { options, positionals } = parseCli(args.slice(1));
-  const { config, adapter, listAllIssues } = loadConfig(options.workflow);
+  const { config, adapter, listAllIssues, executionLogPath } = loadConfig(options.workflow);
 
   switch (command) {
     case "list":
@@ -294,7 +354,7 @@ async function main() {
         console.error("Error: show requires <id>");
         process.exit(1);
       }
-      await cmdShow(listAllIssues, id);
+      await cmdShow(listAllIssues, executionLogPath, id);
       break;
     }
 
