@@ -71,6 +71,7 @@ export class Orchestrator {
 
   private scheduleTick(): void {
     if (!this.running) return;
+    this.state.nextTickAt = Date.now() + this.state.pollIntervalMs;
     this.tickTimer = setTimeout(() => {
       this.tick().then(() => this.scheduleTick());
     }, this.state.pollIntervalMs);

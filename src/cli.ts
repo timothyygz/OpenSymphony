@@ -1,28 +1,36 @@
-import { Orchestrator } from "./orchestrator/orchestrator.ts";
-import { WorkflowWatcher } from "./workflow/watcher.ts";
-import { loadWorkflow, resolveWorkflowPath } from "./workflow/loader.ts";
-import { buildServiceConfig, validateDispatchConfig } from "./workflow/config.ts";
-import { createTracker } from "./adapters/tracker/registry.ts";
-import { createAgent } from "./adapters/agent/registry.ts";
-import { WorkspaceManager } from "./workspace/manager.ts";
-import { logger } from "./logging/logger.ts";
-
-// Register built-in adapters
-import "./adapters/tracker/feishu-bitable/register.ts";
-import "./adapters/agent/claude-code/register.ts";
-
-function parseArgs(args: string[]): { workflowPath?: string } {
-  if (args.length === 0) return {};
-  if (args[0] === "--help" || args[0] === "-h") {
-    console.log("Usage: symphony [path-to-WORKFLOW.md]");
-    console.log("  If no path is given, uses ./WORKFLOW.md");
+function parseArgs(args: string[]): { workflowPath?: string; noTui: boolean } {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: symphony [options] [path-to-WORKFLOW.md]");
+    console.log("  --no-tui    Run in headless mode (JSON logs to stdout)");
+    console.log("  --help, -h  Show this help");
     process.exit(0);
   }
-  return { workflowPath: args[0] };
+  const noTui = args.includes("--no-tui");
+  const positional = args.filter((a) => !a.startsWith("-"));
+  return { workflowPath: positional[0], noTui };
 }
 
 async function main() {
-  const { workflowPath } = parseArgs(process.argv.slice(2));
+  const { workflowPath, noTui } = parseArgs(process.argv.slice(2));
+
+  const useTui = !noTui && process.stdout.isTTY && process.env.TERM !== "dumb";
+  if (useTui) {
+    process.env.SYMPHONY_LOG_DEST = "stderr";
+  }
+
+  const { Orchestrator } = await import("./orchestrator/orchestrator.ts");
+  const { WorkflowWatcher } = await import("./workflow/watcher.ts");
+  const { loadWorkflow, resolveWorkflowPath } = await import("./workflow/loader.ts");
+  const { buildServiceConfig, validateDispatchConfig } = await import("./workflow/config.ts");
+  const { createTracker } = await import("./adapters/tracker/registry.ts");
+  const { createAgent } = await import("./adapters/agent/registry.ts");
+  const { WorkspaceManager } = await import("./workspace/manager.ts");
+  const { logger } = await import("./logging/logger.ts");
+
+  // Register built-in adapters
+  await import("./adapters/tracker/feishu-bitable/register.ts");
+  await import("./adapters/agent/claude-code/register.ts");
+
   const resolvedPath = resolveWorkflowPath(workflowPath);
 
   logger.info({ path: resolvedPath }, "Starting Symphony service");
@@ -59,6 +67,13 @@ async function main() {
     workspaceManager,
   });
 
+  // Dashboard (TUI mode)
+  let dashboard: { start(): void; stop(): void } | null = null;
+  if (useTui) {
+    const { Dashboard } = await import("./tui/dashboard.ts");
+    dashboard = new Dashboard(orchestrator);
+  }
+
   // Start workflow watcher
   const watcher = new WorkflowWatcher();
   watcher.start(workflowPath, (result) => {
@@ -69,6 +84,7 @@ async function main() {
 
   // Graceful shutdown
   const shutdown = () => {
+    if (dashboard) dashboard.stop();
     logger.info("Shutting down...");
     watcher.stop();
     orchestrator.stop();
@@ -80,10 +96,14 @@ async function main() {
 
   // Start orchestrator
   await orchestrator.start();
+
+  // Start dashboard after orchestrator
+  if (dashboard) dashboard.start();
+
   logger.info("Symphony service started");
 }
 
 main().catch((err) => {
-  logger.fatal({ error: String(err) }, "Fatal error");
+  console.error("Fatal error:", err);
   process.exit(1);
 });

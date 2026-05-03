@@ -218,3 +218,7 @@ bun test
 ## 技术栈
 
 Bun / TypeScript (strict) / Zod / Pino / LiquidJS
+
+## License
+
+MIT

@@ -1,9 +1,25 @@
 import pino from "pino";
 
-export const logger = pino({
-  level: process.env.LOG_LEVEL ?? "info",
-  formatters: {
-    level: (label) => ({ level: label }),
+let _logger: pino.Logger | null = null;
+
+function getLogger(): pino.Logger {
+  if (!_logger) {
+    const dest = process.env.SYMPHONY_LOG_DEST === "stderr"
+      ? pino.destination(2)
+      : undefined;
+    _logger = pino({
+      level: process.env.LOG_LEVEL ?? "info",
+      formatters: {
+        level: (label) => ({ level: label }),
+      },
+    }, dest);
+  }
+  return _logger;
+}
+
+export const logger: pino.Logger = new Proxy({} as pino.Logger, {
+  get(_, prop) {
+    return Reflect.get(getLogger(), prop);
   },
 });
 

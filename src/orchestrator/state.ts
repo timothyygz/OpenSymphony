@@ -9,6 +9,7 @@ export interface OrchestratorState {
   completed: Set<string>;
   aggregateTotals: AggregateTotals;
   rateLimits: unknown;
+  nextTickAt: number | null;
 }
 
 export function createInitialState(): OrchestratorState {
@@ -26,6 +27,7 @@ export function createInitialState(): OrchestratorState {
       secondsRunning: 0,
     },
     rateLimits: null,
+    nextTickAt: null,
   };
 }
 
