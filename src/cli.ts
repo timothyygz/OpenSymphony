@@ -55,6 +55,8 @@ async function main() {
   const workspaceManager = new WorkspaceManager({
     root: config.workspace.root,
     hooks: config.hooks,
+    sources: config.workspace.sources ?? [],
+    workflowDir: workflowDir,
   });
 
   const { TokenLog } = await import("./metrics/token-log.ts");

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.ts";
 import { createInitialState, isActiveState, isTerminalState } from "../../src/orchestrator/state.ts";
@@ -12,12 +12,19 @@ import type { AgentAdapter, AgentSession, AgentSessionContext, AgentEvent, TurnR
 import { WorkspaceManager } from "../../src/workspace/manager.ts";
 import { parseWorkflowContent } from "../../src/workflow/loader.ts";
 import { buildServiceConfig } from "../../src/workflow/config.ts";
+import { readMetaJson } from "../../src/logging/turn-log.ts";
 
 // --- Mock Adapters ---
 
 class MockTracker implements TrackerAdapter {
   kind = "mock";
   private issues: Issue[] = [];
+
+  // Track feedback calls
+  joinCommands = new Map<string, string>();
+  progressUpdates = new Map<string, string[]>();
+  resultSummaries = new Map<string, string>();
+  stateUpdates: { issueId: string; state: string }[] = [];
 
   setIssues(issues: Issue[]) {
     this.issues = issues;
@@ -31,9 +38,25 @@ class MockTracker implements TrackerAdapter {
     return this.issues;
   }
 
-  async updateIssueState(): Promise<void> {}
+  async updateIssueState(issueId: string, state: string): Promise<void> {
+    this.stateUpdates.push({ issueId, state });
+  }
 
   async updateIssueTokens(): Promise<void> {}
+
+  async updateIssueJoinCommand(issueId: string, command: string): Promise<void> {
+    this.joinCommands.set(issueId, command);
+  }
+
+  async updateIssueProgress(issueId: string, progress: string): Promise<void> {
+    const existing = this.progressUpdates.get(issueId) ?? [];
+    existing.push(progress);
+    this.progressUpdates.set(issueId, existing);
+  }
+
+  async updateIssueResultSummary(issueId: string, summary: string): Promise<void> {
+    this.resultSummaries.set(issueId, summary);
+  }
 
   async fetchIssueStatesByIds(ids: string[]): Promise<Issue[]> {
     return this.issues.filter((i) => ids.includes(i.id));
@@ -44,14 +67,27 @@ class MockAgent implements AgentAdapter {
   kind = "mock";
   turnResults: TurnResult[] = [];
   callCount = 0;
+  private eventsPerTurn: AgentEvent[][] = [];
 
-  async startSession(ctx: AgentSessionContext): Promise<AgentSession> {
-    return { id: ctx.sessionId, turnCount: 0, metadata: { workspacePath: ctx.workspacePath } };
+  /** Set events to emit during each turn */
+  setTurnEvents(events: AgentEvent[][]) {
+    this.eventsPerTurn = events;
   }
 
-  async runTurn(session: AgentSession, _prompt: string, _onEvent: (event: AgentEvent) => void): Promise<TurnResult> {
+  async startSession(ctx: AgentSessionContext): Promise<AgentSession> {
+    return { id: ctx.sessionId, turnCount: 0, metadata: { workspacePath: ctx.workspacePath, sessionId: ctx.sessionId } };
+  }
+
+  async runTurn(session: AgentSession, _prompt: string, onEvent: (event: AgentEvent) => void): Promise<TurnResult> {
     session.turnCount++;
     this.callCount++;
+
+    // Emit configured events for this turn
+    const events = this.eventsPerTurn.shift() ?? [];
+    for (const event of events) {
+      onEvent(event);
+    }
+
     return this.turnResults.shift() ?? { status: "completed" };
   }
 
@@ -250,7 +286,7 @@ describe("Orchestrator integration", () => {
       return originalFetch(ids);
     };
 
-    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 } });
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
     const orchestrator = new Orchestrator({
       config,
       workflow,
@@ -268,6 +304,206 @@ describe("Orchestrator integration", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(mockAgent.callCount).toBeGreaterThanOrEqual(1);
+    orchestrator.stop();
+  });
+
+  it("writes join command to tracker on dispatch", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+    mockAgent.turnResults = [{ status: "completed" }];
+
+    // Make issue terminal after first turn
+    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
+    let fetchCount = 0;
+    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
+      fetchCount++;
+      if (fetchCount > 0) return [makeIssue({ state: "已完成" })];
+      return origFetch(ids);
+    };
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    await (orchestrator as any).tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    const joinCmd = mockTracker.joinCommands.get("issue-1");
+    expect(joinCmd).toBeDefined();
+    expect(joinCmd).toContain("--resume");
+    expect(joinCmd).toContain("cd ");
+
+    orchestrator.stop();
+  });
+
+  it("creates meta.json with session info on dispatch", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+    mockAgent.turnResults = [{ status: "completed" }];
+
+    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
+    let fetchCount = 0;
+    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
+      fetchCount++;
+      if (fetchCount > 0) return [makeIssue({ state: "已完成" })];
+      return origFetch(ids);
+    };
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    await (orchestrator as any).tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Check meta.json was created in workspace
+    const metaPath = resolve(tempRoot, "MT-100", ".symphony", "meta.json");
+    expect(existsSync(metaPath)).toBe(true);
+
+    const meta = readMetaJson(resolve(tempRoot, "MT-100"));
+    expect(meta).not.toBeNull();
+    expect(meta!.issueId).toBe("issue-1");
+    expect(meta!.identifier).toBe("MT-100");
+    expect(meta!.sessionId).toBeNull();
+    expect(meta!.joinCommand).toContain("--resume");
+    expect(meta!.joinCommand).toContain("cd ");
+
+    orchestrator.stop();
+  });
+
+  it("updates progress in tracker after each turn", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+
+    // 2 turns, then terminal
+    mockAgent.turnResults = [{ status: "completed" }, { status: "completed" }];
+    mockAgent.setTurnEvents([
+      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Analyzing code" }],
+      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Fixing bug" }],
+    ]);
+
+    let fetchCount = 0;
+    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
+    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
+      fetchCount++;
+      if (fetchCount >= 2) return [makeIssue({ state: "已完成" })];
+      return origFetch(ids);
+    };
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    await (orchestrator as any).tick();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const progressList = mockTracker.progressUpdates.get("issue-1");
+    expect(progressList).toBeDefined();
+    expect(progressList!.length).toBeGreaterThanOrEqual(1);
+    expect(progressList![0]).toContain("Turn 1/3");
+
+    orchestrator.stop();
+  });
+
+  it("writes result summary on normal exit", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+    mockAgent.turnResults = [{ status: "completed" }];
+    mockAgent.setTurnEvents([
+      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Task completed: fixed all tests" }],
+    ]);
+
+    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
+    let fetchCount = 0;
+    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
+      fetchCount++;
+      if (fetchCount > 0) return [makeIssue({ state: "已完成" })];
+      return origFetch(ids);
+    };
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    await (orchestrator as any).tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    const summary = mockTracker.resultSummaries.get("issue-1");
+    expect(summary).toBeDefined();
+    expect(summary).toContain("fixed all tests");
+
+    orchestrator.stop();
+  });
+
+  it("writes turn log with user prompt and assistant messages", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+    mockAgent.turnResults = [{ status: "completed" }];
+    mockAgent.setTurnEvents([
+      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Hello from agent" }],
+    ]);
+
+    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
+    let fetchCount = 0;
+    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
+      fetchCount++;
+      if (fetchCount > 0) return [makeIssue({ state: "已完成" })];
+      return origFetch(ids);
+    };
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    await (orchestrator as any).tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Check turn log file exists and has content
+    const turnsPath = resolve(tempRoot, "MT-100", ".symphony", "turns.jsonl");
+    expect(existsSync(turnsPath)).toBe(true);
+
+    const content = readFileSync(turnsPath, "utf-8");
+    const lines = content.trim().split("\n").filter((l: string) => l.trim());
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+
+    // First line should be the user prompt
+    const userEntry = JSON.parse(lines[0]!);
+    expect(userEntry.role).toBe("user");
+    expect(userEntry.content).toContain("MT-100");
+
+    // Second line should be assistant message
+    const assistantEntry = JSON.parse(lines[1]!);
+    expect(assistantEntry.role).toBe("assistant");
+    expect(assistantEntry.content).toContain("Hello from agent");
+
+    orchestrator.stop();
+  });
+
+  it("does not write result summary on failure", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+    mockAgent.turnResults = [{ status: "failed", error: "agent crashed" }];
+
+    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
+    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
+      return [makeIssue({ state: "待处理" })];
+    };
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    await (orchestrator as any).tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(mockTracker.resultSummaries.has("issue-1")).toBe(false);
+
     orchestrator.stop();
   });
 });

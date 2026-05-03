@@ -17,6 +17,9 @@ export interface FeishuBitableConfig {
   priorityField?: string;
   labelsField?: string;
   tokensField?: string;
+  joinCommandField?: string;
+  progressField?: string;
+  resultSummaryField?: string;
   activeStates: string[];
   terminalStates: string[];
 }
@@ -27,6 +30,9 @@ export class FeishuBitableAdapter implements TrackerAdapter {
   private readonly api: FeishuBitableApi;
   private readonly fieldMapping: FieldMapping;
   private readonly tokensField: string | undefined;
+  private readonly joinCommandField: string | undefined;
+  private readonly progressField: string | undefined;
+  private readonly resultSummaryField: string | undefined;
   private readonly activeStates: string[];
   private readonly terminalStates: string[];
 
@@ -42,6 +48,9 @@ export class FeishuBitableAdapter implements TrackerAdapter {
       labelsField: config.labelsField,
     };
     this.tokensField = config.tokensField;
+    this.joinCommandField = config.joinCommandField;
+    this.progressField = config.progressField;
+    this.resultSummaryField = config.resultSummaryField;
     this.activeStates = config.activeStates.map((s) => s.trim());
     this.terminalStates = config.terminalStates.map((s) => s.trim());
   }
@@ -98,6 +107,24 @@ export class FeishuBitableAdapter implements TrackerAdapter {
     await this.api.updateRecord(issueId, { [this.tokensField]: tokens.totalTokens });
     logger.info({ issueId, totalTokens: tokens.totalTokens }, "Updated issue tokens in tracker");
   }
+
+  async updateIssueJoinCommand(issueId: string, command: string): Promise<void> {
+    if (!this.joinCommandField) return;
+    await this.api.updateRecord(issueId, { [this.joinCommandField]: command });
+    logger.info({ issueId }, "Updated issue join command in tracker");
+  }
+
+  async updateIssueProgress(issueId: string, progress: string): Promise<void> {
+    if (!this.progressField) return;
+    await this.api.updateRecord(issueId, { [this.progressField]: progress });
+    logger.info({ issueId, progress }, "Updated issue progress in tracker");
+  }
+
+  async updateIssueResultSummary(issueId: string, summary: string): Promise<void> {
+    if (!this.resultSummaryField) return;
+    await this.api.updateRecord(issueId, { [this.resultSummaryField]: summary });
+    logger.info({ issueId }, "Updated issue result summary in tracker");
+  }
 }
 
 export function createFeishuBitableAdapter(rawConfig: Record<string, unknown>): TrackerAdapter {
@@ -113,6 +140,9 @@ export function createFeishuBitableAdapter(rawConfig: Record<string, unknown>): 
     priorityField: rawConfig.priority_field as string | undefined,
     labelsField: rawConfig.labels_field as string | undefined,
     tokensField: rawConfig.tokens_field as string | undefined,
+    joinCommandField: rawConfig.join_command_field as string | undefined,
+    progressField: rawConfig.progress_field as string | undefined,
+    resultSummaryField: rawConfig.result_summary_field as string | undefined,
     activeStates: (rawConfig.active_states as string[]) ?? ["待处理", "进行中"],
     terminalStates: (rawConfig.terminal_states as string[]) ?? ["已完成", "已取消"],
   });

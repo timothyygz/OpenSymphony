@@ -1,20 +1,25 @@
-import { mkdirSync, existsSync, rmSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { existsSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Workspace } from "../model/index.ts";
-import { sanitizeKey, validateContainment } from "./safety.ts";
+import type { WorkspaceSource } from "../model/workflow.ts";
+import { sanitizeKey, validateContainment, expandPath } from "./safety.ts";
 import { runHookIfConfigured, runHookBestEffort, type HooksConfig } from "./hooks.ts";
+import { initSources, cleanupSources } from "./sources.ts";
+import { writeMetaJson, readMetaJson } from "../logging/turn-log.ts";
 import { WorkspaceSafetyError, WorkspaceCreationError } from "../errors/errors.ts";
 import { logger } from "../logging/logger.ts";
 
 export interface WorkspaceManagerConfig {
   root: string;
   hooks: HooksConfig;
+  sources: WorkspaceSource[];
+  workflowDir: string;
 }
 
 export class WorkspaceManager {
   constructor(private readonly config: WorkspaceManagerConfig) {}
 
-  createForIssue(identifier: string): Workspace {
+  async createForIssue(identifier: string): Promise<Workspace> {
     const workspaceKey = sanitizeKey(identifier);
     const workspacePath = resolve(this.config.root, workspaceKey);
 
@@ -27,7 +32,8 @@ export class WorkspaceManager {
 
     if (!existed) {
       try {
-        mkdirSync(workspacePath, { recursive: true });
+        const { mkdir } = await import("node:fs/promises");
+        await mkdir(workspacePath, { recursive: true });
         createdNow = true;
         logger.info({ workspaceKey, workspacePath }, "Workspace created");
       } catch (err) {
@@ -38,16 +44,32 @@ export class WorkspaceManager {
     const workspace: Workspace = { path: workspacePath, workspaceKey, createdNow };
 
     if (createdNow) {
-      runHookIfConfigured("after_create", this.config.hooks, workspacePath)
-        .catch((err) => {
-          // Clean up partially created workspace on hook failure
-          try {
-            rmSync(workspacePath, { recursive: true, force: true });
-          } catch {
-            // Best effort cleanup
+      try {
+        // Initialize sources (git clone / worktree) before hooks
+        if (this.config.sources.length > 0) {
+          await initSources(this.config.sources, workspacePath, this.config.workflowDir);
+        }
+
+        // Run after_create hook
+        await runHookIfConfigured("after_create", this.config.hooks, workspacePath);
+      } catch (err) {
+        // Clean up partially created workspace on failure
+        try { rmSync(workspacePath, { recursive: true, force: true }); } catch {}
+        throw new WorkspaceCreationError(`Workspace initialization failed: ${err}`);
+      }
+    } else {
+      // Warn if sources config has changed since creation
+      try {
+        const meta = readMetaJson(workspacePath);
+        if (meta?.sourcesHash) {
+          const currentHash = hashSources(this.config.sources);
+          if (currentHash !== meta.sourcesHash) {
+            logger.warn({ identifier, workspaceKey }, "Sources config has changed since workspace creation");
           }
-          throw new WorkspaceCreationError(`after_create hook failed: ${err}`);
-        });
+        }
+      } catch {
+        // meta.json may not exist for pre-existing workspaces
+      }
     }
 
     return workspace;
@@ -62,6 +84,16 @@ export class WorkspaceManager {
 
     await runHookBestEffort("before_remove", this.config.hooks, workspacePath);
 
+    // Cleanup worktree sources using meta.json snapshot
+    try {
+      const meta = readMetaJson(workspacePath);
+      if (meta?.sources && Array.isArray(meta.sources)) {
+        await cleanupSources(meta.sources, workspacePath);
+      }
+    } catch {
+      // meta.json may not exist
+    }
+
     try {
       rmSync(workspacePath, { recursive: true, force: true });
       logger.info({ workspaceKey }, "Workspace cleaned up");
@@ -75,4 +107,10 @@ export class WorkspaceManager {
       await this.cleanupWorkspace(identifier);
     }
   }
+}
+
+export function hashSources(sources: WorkspaceSource[]): string {
+  // Bun supports require for node:crypto
+  const { createHash } = require("node:crypto") as typeof import("node:crypto");
+  return createHash("sha256").update(JSON.stringify(sources)).digest("hex").slice(0, 16);
 }

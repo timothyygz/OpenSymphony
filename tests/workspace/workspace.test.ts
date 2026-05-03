@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { sanitizeKey, validateContainment } from "../../src/workspace/safety.ts";
 import { WorkspaceManager } from "../../src/workspace/manager.ts";
 
+const defaultConfig = { root: "", hooks: { timeout_ms: 5000 }, sources: [] as never[], workflowDir: "" };
+
 describe("sanitizeKey", () => {
   it("preserves valid characters", () => {
     expect(sanitizeKey("MT-100")).toBe("MT-100");
@@ -48,33 +50,33 @@ describe("WorkspaceManager", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it("creates workspace for new issue", () => {
-    const manager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 } });
-    const ws = manager.createForIssue("MT-100");
+  it("creates workspace for new issue", async () => {
+    const manager = new WorkspaceManager({ ...defaultConfig, root: tempRoot });
+    const ws = await manager.createForIssue("MT-100");
 
     expect(ws.workspaceKey).toBe("MT-100");
     expect(ws.createdNow).toBe(true);
     expect(existsSync(ws.path)).toBe(true);
   });
 
-  it("reuses existing workspace", () => {
-    const manager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 } });
-    const ws1 = manager.createForIssue("MT-100");
-    const ws2 = manager.createForIssue("MT-100");
+  it("reuses existing workspace", async () => {
+    const manager = new WorkspaceManager({ ...defaultConfig, root: tempRoot });
+    const ws1 = await manager.createForIssue("MT-100");
+    const ws2 = await manager.createForIssue("MT-100");
 
     expect(ws2.createdNow).toBe(false);
     expect(ws2.path).toBe(ws1.path);
   });
 
-  it("sanitizes identifier in workspace key", () => {
-    const manager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 } });
-    const ws = manager.createForIssue("MT 100/special");
+  it("sanitizes identifier in workspace key", async () => {
+    const manager = new WorkspaceManager({ ...defaultConfig, root: tempRoot });
+    const ws = await manager.createForIssue("MT 100/special");
     expect(ws.workspaceKey).toBe("MT_100_special");
   });
 
   it("cleans up workspace", async () => {
-    const manager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 } });
-    const ws = manager.createForIssue("MT-100");
+    const manager = new WorkspaceManager({ ...defaultConfig, root: tempRoot });
+    const ws = await manager.createForIssue("MT-100");
     expect(existsSync(ws.path)).toBe(true);
 
     await manager.cleanupWorkspace("MT-100");

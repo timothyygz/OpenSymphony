@@ -26,6 +26,9 @@ export const trackerConfigSchema = z.object({
   priority_field: z.string().optional(),
   labels_field: z.string().optional(),
   tokens_field: z.string().optional(),
+  join_command_field: z.string().optional(),
+  progress_field: z.string().optional(),
+  result_summary_field: z.string().optional(),
 });
 export type TrackerConfig = z.infer<typeof trackerConfigSchema>;
 
@@ -38,8 +41,30 @@ export type PollingConfig = z.infer<typeof pollingConfigSchema>;
 
 // --- Workspace config ---
 
+const gitCloneSourceSchema = z.object({
+  type: z.literal("git-clone"),
+  url: z.string(),
+  path: z.string(),
+  branch: z.string().optional(),
+  depth: z.number().optional().default(1),
+});
+
+const gitWorktreeSourceSchema = z.object({
+  type: z.literal("git-worktree"),
+  repo: z.string(),
+  path: z.string().optional(),
+  branch: z.string().optional(),
+});
+
+export const workspaceSourceSchema = z.discriminatedUnion("type", [
+  gitCloneSourceSchema,
+  gitWorktreeSourceSchema,
+]);
+export type WorkspaceSource = z.infer<typeof workspaceSourceSchema>;
+
 export const workspaceConfigSchema = z.object({
   root: z.string().default(""),
+  sources: z.array(workspaceSourceSchema).optional().default([]),
 });
 export type WorkspaceConfig = z.infer<typeof workspaceConfigSchema>;
 
@@ -76,7 +101,7 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export const serviceConfigSchema = z.object({
   tracker: trackerConfigSchema,
   polling: pollingConfigSchema.optional().default({ interval_ms: 30000 }),
-  workspace: workspaceConfigSchema.optional().default({ root: "" }),
+  workspace: workspaceConfigSchema.optional().default({ root: "", sources: [] }),
   hooks: hooksConfigSchema.optional().default({ timeout_ms: 60000 }),
   agent: agentConfigSchema.optional().default({ kind: "claude-code", stall_timeout_ms: 300000, max_concurrent_agents: 10, max_turns: 20, max_retry_backoff_ms: 300000, max_concurrent_agents_by_state: {}, config: {}, in_progress_state: "进行中", active_reset_state: "待处理" }),
   server: z.object({

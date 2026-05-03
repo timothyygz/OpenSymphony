@@ -27,8 +27,38 @@ function mapToAgentEvent(parsed: StreamJsonEvent): AgentEvent {
     timestamp: new Date().toISOString(),
     message: extractMessage(parsed),
     usage: extractUsage(parsed),
+    rawEvent: parsed as unknown as import("../types.ts").ClaudeStreamEvent,
+    toolName: extractToolName(parsed),
+    toolInput: extractToolInput(parsed),
+    sessionId: typeof parsed.session_id === "string" ? parsed.session_id : undefined,
   };
   return event;
+}
+
+function extractToolName(parsed: StreamJsonEvent): string | undefined {
+  if (typeof parsed.tool_name === "string") return parsed.tool_name;
+  const msg = parsed.message;
+  if (msg && typeof msg === "object" && "content" in msg && Array.isArray(msg.content)) {
+    for (const block of msg.content) {
+      if (typeof block === "object" && block !== null && "name" in block) {
+        return String((block as Record<string, unknown>).name);
+      }
+    }
+  }
+  return undefined;
+}
+
+function extractToolInput(parsed: StreamJsonEvent): unknown {
+  if (parsed.tool_input !== undefined) return parsed.tool_input;
+  const msg = parsed.message;
+  if (msg && typeof msg === "object" && "content" in msg && Array.isArray(msg.content)) {
+    for (const block of msg.content) {
+      if (typeof block === "object" && block !== null && "input" in block) {
+        return (block as Record<string, unknown>).input;
+      }
+    }
+  }
+  return undefined;
 }
 
 function extractMessage(parsed: StreamJsonEvent): string | undefined {

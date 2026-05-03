@@ -32,15 +32,21 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       metadata: {
         workspacePath: ctx.workspacePath,
         issueIdentifier: ctx.issue.identifier,
+        sessionId: ctx.sessionId,
       },
     };
   }
 
   async runTurn(session: AgentSession, prompt: string, onEvent: (event: AgentEvent) => void): Promise<TurnResult> {
     const isFirstTurn = session.turnCount === 0;
-    const args = isFirstTurn
-      ? ["-p", prompt]
-      : ["--continue", "-p", prompt];
+    const sessionId = session.metadata.realSessionId as string ?? session.metadata.sessionId as string | undefined;
+
+    const args: string[] = [];
+    if (isFirstTurn) {
+      args.push("-p", prompt);
+    } else {
+      args.push("--resume", sessionId ?? "", "-p", prompt);
+    }
 
     args.push("--output-format", this.outputFormat, "--verbose");
 
@@ -63,7 +69,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       cwd: workspacePath,
       timeoutMs: this.timeoutMs,
       onEvent: (event) => {
-        // Track session ID from Claude Code output if available
+        if (event.sessionId && !session.metadata.realSessionId) {
+          session.metadata.realSessionId = event.sessionId;
+        }
         onEvent(event);
       },
     });

@@ -2,12 +2,25 @@ import type { Issue, TokenUsage } from "../../model/index.ts";
 
 export type { TokenUsage };
 
+export interface ClaudeStreamEvent {
+  type: string;
+  message?: { content: unknown[]; usage?: unknown };
+  tool_name?: string;
+  tool_input?: unknown;
+  result?: string;
+  [key: string]: unknown;
+}
+
 export interface AgentEvent {
   event: string;
   timestamp: string;
   message?: string;
   usage?: TokenUsage;
   rateLimits?: unknown;
+  rawEvent?: ClaudeStreamEvent;
+  toolName?: string;
+  toolInput?: unknown;
+  sessionId?: string;
 }
 
 export interface AgentSession {

@@ -1,7 +1,7 @@
 import type { ServiceConfig, Issue, RunningEntry, WorkflowDefinition } from "../model/index.ts";
 import type { TrackerAdapter } from "../adapters/tracker/types.ts";
 import type { AgentAdapter, AgentEvent, AgentSession } from "../adapters/agent/types.ts";
-import { WorkspaceManager } from "../workspace/manager.ts";
+import { WorkspaceManager, hashSources } from "../workspace/manager.ts";
 import { renderTemplate, buildContinuationGuidance } from "../workflow/prompt.ts";
 import { runHookIfConfigured, runHookBestEffort } from "../workspace/hooks.ts";
 import { createInitialState, isActiveState, isTerminalState, addRuntimeSeconds, addTokenUsage } from "./state.ts";
@@ -12,6 +12,7 @@ import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
 import type { ExecutionLog } from "../logging/execution-log.ts";
 import type { TokenLog } from "../metrics/token-log.ts";
+import { TurnLog, writeMetaJson, updateMetaJson } from "../logging/turn-log.ts";
 
 export interface OrchestratorDeps {
   config: ServiceConfig;
@@ -126,6 +127,7 @@ export class Orchestrator {
 
   // T27: Dispatch one issue
   private dispatchIssue(issue: Issue, attempt: number | null): void {
+    // Placeholder — real session ID is captured from Claude Code's stream-json output
     const sessionId = `${issue.identifier}-${Date.now()}`;
 
     const entry: RunningEntry = {
@@ -162,6 +164,12 @@ export class Orchestrator {
     });
 
     logger.info({ issueId: issue.id, identifier: issue.identifier, attempt }, "Dispatching issue");
+
+    // Write initial join command (updated with real session ID after first turn)
+    const workspacePath = `${this.deps.config.workspace.root}/${issue.identifier.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+    this.deps.tracker.updateIssueJoinCommand?.(issue.id, `cd ${workspacePath} && claude --resume`).catch((err) => {
+      logger.warn({ issueId: issue.id, error: String(err) }, "Failed to write join command");
+    });
 
     this.deps.executionLog?.append({
       event: "dispatch",
@@ -214,7 +222,7 @@ export class Orchestrator {
 
     try {
       // Create/reuse workspace
-      const workspace = workspaceManager.createForIssue(issue.identifier);
+      const workspace = await workspaceManager.createForIssue(issue.identifier);
 
       // before_run hook
       await runHookIfConfigured("before_run", hooks, workspace.path);
@@ -231,6 +239,28 @@ export class Orchestrator {
       const entry = this.state.running.get(issue.id);
       if (entry) entry.sessionId = sessionId;
 
+      // Initialize turn log and meta.json
+      let turnLog: TurnLog | null = null;
+      try {
+        turnLog = new TurnLog(workspace.path);
+        const sources = config.workspace.sources ?? [];
+        writeMetaJson(workspace.path, {
+          issueId: issue.id,
+          identifier: issue.identifier,
+          title: issue.title,
+          workspacePath: workspace.path,
+          sessionId: null,
+          joinCommand: `cd ${workspace.path} && claude --resume`,
+          startedAt: new Date().toISOString(),
+          totalTurns: 0,
+          totalTokens: 0,
+          sources: sources.length > 0 ? sources : undefined,
+          sourcesHash: sources.length > 0 ? hashSources(sources) : undefined,
+        });
+      } catch (err) {
+        logger.warn({ issueId: issue.id, error: String(err) }, "Failed to initialize turn log");
+      }
+
       this.deps.executionLog?.append({
         event: "session_started",
         timestamp: new Date().toISOString(),
@@ -242,6 +272,7 @@ export class Orchestrator {
       // Turn loop
       const maxTurns = config.agent.max_turns;
       let turnNumber = 0;
+      const toolCallsByTurn = new Map<number, string[]>();
 
       while (turnNumber < maxTurns) {
         turnNumber++;
@@ -251,9 +282,14 @@ export class Orchestrator {
           ? renderTemplate(workflow.promptTemplate, issue, attempt)
           : buildContinuationGuidance(issue, attempt);
 
+        // Log user prompt
+        turnLog?.logUserPrompt(turnNumber, prompt);
+
         // Run one turn
+        const turnLogRef = turnLog;
+        const toolCallsRef = toolCallsByTurn;
         const turnResult = await agent.runTurn(session, prompt, (event) => {
-          this.onAgentEvent(issue.id, event);
+          this.onAgentEvent(issue.id, event, turnNumber, turnLogRef, toolCallsRef, workspace.path);
         });
 
         if (turnResult.status !== "completed") {
@@ -285,6 +321,18 @@ export class Orchestrator {
           inputTokens: e?.tokenUsage.inputTokens ?? 0,
           outputTokens: e?.tokenUsage.outputTokens ?? 0,
         });
+
+        // Update meta.json with turn progress
+        if (e) {
+          updateMetaJson(workspace.path, {
+            totalTurns: turnNumber,
+            totalTokens: e.tokenUsage.totalTokens,
+            lastTurnAt: new Date().toISOString(),
+          });
+        }
+
+        // Write progress to tracker
+        this.updateProgress(issue.id, turnNumber, maxTurns, e);
 
         // Refresh issue state from tracker
         let refreshedIssues: Issue[];
@@ -481,6 +529,13 @@ export class Orchestrator {
     this.finalizeWorkerTokens(entry);
 
     if (reason === "normal") {
+      // Write result summary
+      if (entry.lastAgentMessage) {
+        const summary = entry.lastAgentMessage.length > 1000
+          ? entry.lastAgentMessage.slice(0, 1000) + "..."
+          : entry.lastAgentMessage;
+        this.deps.tracker.updateIssueResultSummary?.(issueId, summary).catch(() => {});
+      }
       // Mark issue as completed in tracker
       const terminalState = this.deps.config.tracker.terminal_states[0] ?? "已完成";
       try {
@@ -602,13 +657,48 @@ export class Orchestrator {
   }
 
   // Agent event callback
-  private onAgentEvent(issueId: string, event: AgentEvent): void {
+  private onAgentEvent(
+    issueId: string,
+    event: AgentEvent,
+    turn: number,
+    turnLog: TurnLog | null,
+    toolCallsByTurn: Map<number, string[]> | null,
+    workspacePath: string,
+  ): void {
     const entry = this.state.running.get(issueId);
     if (!entry) return;
 
     entry.lastAgentEvent = event.event;
     entry.lastAgentTimestamp = new Date(event.timestamp);
     entry.lastAgentMessage = event.message ?? null;
+
+    // Capture real Claude Code session ID from stream-json output
+    if (event.sessionId && !entry.sessionId) {
+      entry.sessionId = event.sessionId;
+      const joinCommand = `cd ${workspacePath} && claude --resume ${event.sessionId}`;
+      this.deps.tracker.updateIssueJoinCommand?.(issueId, joinCommand).catch((err) => {
+        logger.warn({ issueId, error: String(err) }, "Failed to update join command with real session ID");
+      });
+      updateMetaJson(workspacePath, { sessionId: event.sessionId, joinCommand });
+    }
+
+    // Log agent events to turn log
+    if (turnLog) {
+      if (event.message && (event.event === "assistant" || event.event === "message")) {
+        turnLog.logAssistantMessage(turn, event.message);
+      }
+      if (event.toolName) {
+        turnLog.logToolUse(turn, event.toolName, event.toolInput);
+        toolCallsByTurn?.get(turn)?.push(event.toolName) ??
+          toolCallsByTurn?.set(turn, [event.toolName]);
+      }
+      if (event.event === "tool_result" && event.rawEvent) {
+        const output = typeof event.rawEvent.result === "string"
+          ? event.rawEvent.result
+          : event.message ?? "";
+        turnLog.logToolResult(turn, event.toolName ?? "unknown", output);
+      }
+    }
 
     if (event.usage) {
       // Track deltas to avoid double-counting
@@ -629,6 +719,18 @@ export class Orchestrator {
   }
 
   // T34: Startup cleanup
+
+  private updateProgress(issueId: string, turn: number, maxTurns: number, entry: RunningEntry | undefined): void {
+    let summary = entry?.lastAgentMessage ?? "";
+    // Prefer assistant text; fallback to tool names if no message
+    if (!summary) {
+      summary = `Tool calls in progress`;
+    }
+    const progress = `Turn ${turn}/${maxTurns}: ${summary.length > 200 ? summary.slice(0, 200) + "..." : summary}`;
+    this.deps.tracker.updateIssueProgress?.(issueId, progress).catch(() => {});
+  }
+
+  // T34b: Startup cleanup (original)
   private async startupCleanup(): Promise<void> {
     try {
       const terminalIssues = await this.deps.tracker.fetchIssuesByStates(
