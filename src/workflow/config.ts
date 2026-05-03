@@ -31,6 +31,34 @@ export function buildServiceConfig(
   // Resolve $VAR indirection in known env-backed fields
   const config = { ...rawConfig };
 
+  // Backward compatibility: migrate legacy codex/claude_code to unified agent config
+  if (!config.agent || typeof config.agent !== "object") {
+    const agent: Record<string, unknown> = {};
+    if (config.claude_code && typeof config.claude_code === "object") {
+      agent.kind = "claude-code";
+      agent.config = { ...config.claude_code as Record<string, unknown> };
+      // Copy stall_timeout_ms from codex if available
+      if (config.codex && typeof config.codex === "object") {
+        const codex = config.codex as Record<string, unknown>;
+        if (codex.stall_timeout_ms !== undefined) agent.stall_timeout_ms = codex.stall_timeout_ms;
+        if (codex.max_concurrent_agents !== undefined) agent.max_concurrent_agents = codex.max_concurrent_agents;
+        if (codex.max_turns !== undefined) agent.max_turns = codex.max_turns;
+        if (codex.max_retry_backoff_ms !== undefined) agent.max_retry_backoff_ms = codex.max_retry_backoff_ms;
+      }
+    } else if (config.codex && typeof config.codex === "object") {
+      agent.kind = "claude-code";
+      const codex = config.codex as Record<string, unknown>;
+      agent.config = { command: codex.command ?? "claude" };
+      if (codex.stall_timeout_ms !== undefined) agent.stall_timeout_ms = codex.stall_timeout_ms;
+      if (codex.max_concurrent_agents !== undefined) agent.max_concurrent_agents = codex.max_concurrent_agents;
+      if (codex.max_turns !== undefined) agent.max_turns = codex.max_turns;
+      if (codex.max_retry_backoff_ms !== undefined) agent.max_retry_backoff_ms = codex.max_retry_backoff_ms;
+    }
+    if (Object.keys(agent).length > 0) {
+      config.agent = agent;
+    }
+  }
+
   if (config.tracker && typeof config.tracker === "object") {
     const tracker = config.tracker as Record<string, unknown>;
     if (typeof tracker.api_key === "string") {
@@ -84,8 +112,7 @@ export function validateDispatchConfig(config: ServiceConfig): string | null {
     if (!config.tracker.api_key) return "tracker.api_key ($LINEAR_API_KEY) is required";
     if (!config.tracker.project_slug) return "tracker.project_slug is required for linear";
   }
-  // Check agent command availability
-  const agentCommand = config.codex.command;
-  if (!agentCommand) return "codex.command is required";
+  // Check agent kind is specified
+  if (!config.agent.kind) return "agent.kind is required";
   return null;
 }

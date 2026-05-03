@@ -27,14 +27,16 @@ hooks:
     echo "Starting work on issue"
 
 agent:
+  kind: claude-code
   max_concurrent_agents: 5
   max_turns: 20
   max_retry_backoff_ms: 300000
-
-claude_code:
-  command: claude
-  timeout_ms: 3600000
-  approval_policy: auto
+  in_progress_state: "进行中"
+  active_reset_state: "待处理"
+  config:
+    command: claude
+    timeout_ms: 3600000
+    approval_policy: auto
 ---
 
 You are an AI coding assistant working on issue {{ issue.identifier }}: {{ issue.title }}.

@@ -1,9 +1,12 @@
 import { enterAltScreen, exitAltScreen, drawLines } from "./renderer.ts";
-import { formatHeader, formatRunningTable, formatBackoffQueue } from "./layout.ts";
+import { formatHeader, formatHistory, formatRunningTable, formatBackoffQueue } from "./layout.ts";
 import { Sparkline } from "./sparkline.ts";
+import { aggregate } from "../metrics/aggregator.ts";
 import type { Orchestrator } from "../orchestrator/orchestrator.ts";
+import type { HistoryStats } from "../model/session.ts";
 
 const DEFAULT_REFRESH_MS = 1000;
+const HISTORY_REFRESH_MS = 30_000;
 
 export class Dashboard {
   private readonly orchestrator: Orchestrator;
@@ -15,8 +18,13 @@ export class Dashboard {
   private lastRenderAt = 0;
   private readonly minIdleRerenderMs = 1000;
 
-  constructor(orchestrator: Orchestrator) {
+  private readonly tokenLogPath: string;
+  private cachedHistory: HistoryStats | null = null;
+  private lastHistoryQueryAt = 0;
+
+  constructor(orchestrator: Orchestrator, tokenLogPath: string) {
     this.orchestrator = orchestrator;
+    this.tokenLogPath = tokenLogPath;
     this.refreshMs = parseInt(process.env.SYMPHONY_TUI_REFRESH_MS ?? "", 10) || DEFAULT_REFRESH_MS;
   }
 
@@ -47,7 +55,7 @@ export class Dashboard {
     exitAltScreen();
   }
 
-  private render(): void {
+  private async render(): Promise<void> {
     const now = Date.now();
     const state = this.orchestrator.getState();
     const fp = stateFingerprint(state);
@@ -59,12 +67,16 @@ export class Dashboard {
     this.lastFingerprint = fp;
     this.lastRenderAt = now;
 
+    const history = await this.getHistory(now);
+
     const header = formatHeader(state, this.sparkline, now);
+    const historyLines = formatHistory(history);
     const table = formatRunningTable(state);
     const backoff = formatBackoffQueue(state);
 
     const lines = [
       ...header,
+      ...historyLines,
       ...table,
       "",
       ...backoff,
@@ -72,6 +84,16 @@ export class Dashboard {
     ];
 
     drawLines(lines);
+  }
+
+  private async getHistory(now: number): Promise<HistoryStats> {
+    if (this.cachedHistory && now - this.lastHistoryQueryAt < HISTORY_REFRESH_MS) {
+      return this.cachedHistory;
+    }
+
+    this.cachedHistory = await aggregate(this.tokenLogPath);
+    this.lastHistoryQueryAt = now;
+    return this.cachedHistory;
   }
 
   private forceRender(): void {
@@ -91,7 +113,7 @@ function stateFingerprint(state: {
   aggregateTotals: { totalTokens: number; secondsRunning: number };
 }): string {
   const running = [...state.running.values()]
-    .map((e) => `${e.identifier}:${e.lastCodexEvent}:${e.turnCount}:${e.tokenUsage.totalTokens}`)
+    .map((e) => `${e.identifier}:${e.lastAgentEvent}:${e.turnCount}:${e.tokenUsage.totalTokens}`)
     .join("|");
   const retry = [...state.retryAttempts.values()]
     .map((e) => `${e.identifier}:${e.dueAtMs}`)
@@ -102,7 +124,7 @@ function stateFingerprint(state: {
 
 type RunningEntry = {
   identifier: string;
-  lastCodexEvent: string | null;
+  lastAgentEvent: string | null;
   turnCount: number;
   tokenUsage: { totalTokens: number };
 };

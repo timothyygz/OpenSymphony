@@ -54,28 +54,22 @@ export const hooksConfigSchema = z.object({
 });
 export type HooksConfig = z.infer<typeof hooksConfigSchema>;
 
-// --- Agent config ---
+// --- Agent config (unified) ---
 
 export const agentConfigSchema = z.object({
+  kind: z.string().default("claude-code"),
+  stall_timeout_ms: z.number().default(300000),
   max_concurrent_agents: z.number().default(10),
   max_turns: z.number().positive().default(20),
   max_retry_backoff_ms: z.number().default(300000),
   max_concurrent_agents_by_state: z.record(z.string(), z.number().positive()).default({} as Record<string, number>),
+  // Agent-specific config, passed through to the adapter
+  config: z.record(z.string(), z.unknown()).default({}),
+  // State names for dispatch/retry transitions (defaults to Chinese for backward compat)
+  in_progress_state: z.string().default("进行中"),
+  active_reset_state: z.string().default("待处理"),
 });
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
-
-// --- Codex / Claude Code config ---
-
-export const codexConfigSchema = z.object({
-  command: z.string().default("codex app-server"),
-  approval_policy: z.string().optional(),
-  thread_sandbox: z.string().optional(),
-  turn_sandbox_policy: z.string().optional(),
-  turn_timeout_ms: z.number().default(3600000),
-  read_timeout_ms: z.number().default(5000),
-  stall_timeout_ms: z.number().default(300000),
-});
-export type CodexConfig = z.infer<typeof codexConfigSchema>;
 
 // --- Full ServiceConfig ---
 
@@ -84,15 +78,7 @@ export const serviceConfigSchema = z.object({
   polling: pollingConfigSchema.optional().default({ interval_ms: 30000 }),
   workspace: workspaceConfigSchema.optional().default({ root: "" }),
   hooks: hooksConfigSchema.optional().default({ timeout_ms: 60000 }),
-  agent: agentConfigSchema.optional().default({ max_concurrent_agents: 10, max_turns: 20, max_retry_backoff_ms: 300000, max_concurrent_agents_by_state: {} }),
-  codex: codexConfigSchema.optional().default({ command: "codex app-server", turn_timeout_ms: 3600000, read_timeout_ms: 5000, stall_timeout_ms: 300000 }),
-  // Extensions
-  claude_code: z.object({
-    command: z.string().default("claude"),
-    output_format: z.string().default("stream-json"),
-    timeout_ms: z.number().default(3600000),
-    approval_policy: z.string().optional(),
-  }).optional(),
+  agent: agentConfigSchema.optional().default({ kind: "claude-code", stall_timeout_ms: 300000, max_concurrent_agents: 10, max_turns: 20, max_retry_backoff_ms: 300000, max_concurrent_agents_by_state: {}, config: {}, in_progress_state: "进行中", active_reset_state: "待处理" }),
   server: z.object({
     port: z.number().optional(),
   }).optional(),

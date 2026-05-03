@@ -7,7 +7,6 @@ export type {
   WorkspaceConfig,
   HooksConfig,
   AgentConfig,
-  CodexConfig,
 } from "./workflow.ts";
 export { serviceConfigSchema } from "./workflow.ts";
 export type { Workspace, RunAttempt, RunAttemptStatus } from "./workspace.ts";
@@ -17,4 +16,6 @@ export type {
   RetryEntry,
   RunningEntry,
   AggregateTotals,
+  PeriodStats,
+  HistoryStats,
 } from "./session.ts";

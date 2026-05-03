@@ -3,7 +3,7 @@ import { displayWidth, padCell, truncate, formatCount, formatRuntime } from "./f
 import { humanizeEvent, dotColor, formatRateLimits } from "./events.ts";
 import type { Sparkline } from "./sparkline.ts";
 import type { OrchestratorState } from "../orchestrator/state.ts";
-import type { RunningEntry, RetryEntry } from "../model/index.ts";
+import type { RunningEntry, RetryEntry, HistoryStats, PeriodStats } from "../model/index.ts";
 
 const COL_ID = 10;
 const COL_TITLE = 24;
@@ -70,6 +70,26 @@ export function formatHeader(
   ];
 }
 
+function formatPeriodStats(label: string, stats: PeriodStats, color: string): string {
+  return colorize(label, color) +
+    colorize(`${formatCount(stats.totalTokens)} tokens`, color) +
+    colorize(` (${stats.issueCount} issues)`, ANSI.gray);
+}
+
+export function formatHistory(history: HistoryStats): string[] {
+  const sep = colorize(" │ ", ANSI.gray);
+  const line = formatPeriodStats("Today: ", history.today, ANSI.cyan) +
+    sep +
+    formatPeriodStats("Week: ", history.week, ANSI.magenta) +
+    sep +
+    formatPeriodStats("Month: ", history.month, ANSI.yellow);
+
+  return [
+    colorize("├─ History", ANSI.bold),
+    "│ " + line,
+  ];
+}
+
 export function formatRunningTable(state: OrchestratorState): string[] {
   const running = [...state.running.values()].sort(
     (a, b) => a.identifier.localeCompare(b.identifier),
@@ -107,8 +127,8 @@ export function formatRunningTable(state: OrchestratorState): string[] {
 }
 
 function formatRunningRow(entry: RunningEntry, ew: number): string {
-  const { text: evtText, color: evtColor } = humanizeEvent(entry.lastCodexEvent);
-  const dc = dotColor(entry.lastCodexEvent);
+  const { text: evtText, color: evtColor } = humanizeEvent(entry.lastAgentEvent);
+  const dc = dotColor(entry.lastAgentEvent);
 
   const id = truncate(entry.identifier, COL_ID);
   const title = truncate(entry.issue.title ?? "unknown", COL_TITLE);

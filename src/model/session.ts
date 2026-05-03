@@ -8,10 +8,10 @@ export interface TokenUsage {
 
 export interface LiveSession {
   sessionId: string;
-  codexAppServerPid: number | null;
-  lastCodexEvent: string | null;
-  lastCodexTimestamp: Date | null;
-  lastCodexMessage: string | null;
+  agentPid: number | null;
+  lastAgentEvent: string | null;
+  lastAgentTimestamp: Date | null;
+  lastAgentMessage: string | null;
   tokenUsage: TokenUsage;
   lastReportedTokenUsage: TokenUsage;
   turnCount: number;
@@ -30,10 +30,10 @@ export interface RunningEntry {
   issue: Issue;
   identifier: string;
   sessionId: string | null;
-  codexAppServerPid: number | null;
-  lastCodexEvent: string | null;
-  lastCodexTimestamp: Date | null;
-  lastCodexMessage: string | null;
+  agentPid: number | null;
+  lastAgentEvent: string | null;
+  lastAgentTimestamp: Date | null;
+  lastAgentMessage: string | null;
   tokenUsage: TokenUsage;
   lastReportedTokenUsage: TokenUsage;
   retryAttempt: number;
@@ -46,4 +46,17 @@ export interface AggregateTotals {
   outputTokens: number;
   totalTokens: number;
   secondsRunning: number;
+}
+
+export interface PeriodStats {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  issueCount: number;
+}
+
+export interface HistoryStats {
+  today: PeriodStats;
+  week: PeriodStats;
+  month: PeriodStats;
 }

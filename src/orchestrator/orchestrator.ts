@@ -130,10 +130,10 @@ export class Orchestrator {
       issue,
       identifier: issue.identifier,
       sessionId: null,
-      codexAppServerPid: null,
-      lastCodexEvent: null,
-      lastCodexTimestamp: null,
-      lastCodexMessage: null,
+      agentPid: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: null,
+      lastAgentMessage: null,
       tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       retryAttempt: attempt ?? 0,
@@ -146,7 +146,7 @@ export class Orchestrator {
     cancelRetry(this.state, issue.id);
 
     // Distributed lock: mark issue as in-progress so other instances skip it
-    this.deps.tracker.updateIssueState(issue.id, "进行中").catch((err) => {
+    this.deps.tracker.updateIssueState(issue.id, this.deps.config.agent.in_progress_state).catch((err) => {
       logger.warn({ issueId: issue.id, error: String(err) }, "Failed to mark issue as in-progress");
     });
 
@@ -158,7 +158,7 @@ export class Orchestrator {
       this.state.running.delete(issue.id);
       this.state.claimed.delete(issue.id);
       // Reset state so retry can re-dispatch
-      this.deps.tracker.updateIssueState(issue.id, "待处理").catch(() => {});
+      this.deps.tracker.updateIssueState(issue.id, this.deps.config.agent.active_reset_state).catch(() => {});
       scheduleRetry(
         this.state,
         issue.id,
@@ -261,12 +261,12 @@ export class Orchestrator {
 
   // T29: Reconcile
   private reconcileStalled(): void {
-    const stallTimeoutMs = this.deps.config.codex.stall_timeout_ms;
+    const stallTimeoutMs = this.deps.config.agent.stall_timeout_ms;
     if (stallTimeoutMs <= 0) return; // disabled
 
     const now = Date.now();
     for (const [issueId, entry] of this.state.running) {
-      const lastActivity = entry.lastCodexTimestamp ?? entry.startedAt;
+      const lastActivity = entry.lastAgentTimestamp ?? entry.startedAt;
       const elapsed = now - lastActivity.getTime();
       if (elapsed > stallTimeoutMs) {
         logger.warn({ issueId, elapsed, stallTimeoutMs }, "Stall detected, terminating worker");
@@ -378,7 +378,7 @@ export class Orchestrator {
     } else {
       // Reset to active state so retry can re-dispatch
       try {
-        await this.deps.tracker.updateIssueState(issueId, "待处理");
+        await this.deps.tracker.updateIssueState(issueId, this.deps.config.agent.active_reset_state);
         logger.info({ issueId }, "Issue reset to active state for retry");
       } catch (err) {
         logger.warn({ issueId, error: String(err) }, "Failed to reset issue state for retry");
@@ -448,9 +448,9 @@ export class Orchestrator {
     const entry = this.state.running.get(issueId);
     if (!entry) return;
 
-    entry.lastCodexEvent = event.event;
-    entry.lastCodexTimestamp = new Date(event.timestamp);
-    entry.lastCodexMessage = event.message ?? null;
+    entry.lastAgentEvent = event.event;
+    entry.lastAgentTimestamp = new Date(event.timestamp);
+    entry.lastAgentMessage = event.message ?? null;
 
     if (event.usage) {
       // Track deltas to avoid double-counting

@@ -49,8 +49,7 @@ async function main() {
 
   // Create adapters
   const tracker = createTracker(config.tracker.kind, config.tracker as unknown as Record<string, unknown>);
-  const agentConfig = config.claude_code ?? { command: config.codex.command };
-  const agent = createAgent("claude-code", agentConfig as unknown as Record<string, unknown>);
+  const agent = createAgent(config.agent.kind, config.agent.config as Record<string, unknown>);
 
   // Create workspace manager
   const workspaceManager = new WorkspaceManager({
@@ -76,7 +75,7 @@ async function main() {
   let dashboard: { start(): void; stop(): void } | null = null;
   if (useTui) {
     const { Dashboard } = await import("./tui/dashboard.ts");
-    dashboard = new Dashboard(orchestrator);
+    dashboard = new Dashboard(orchestrator, tokenLogPath);
   }
 
   // Start workflow watcher

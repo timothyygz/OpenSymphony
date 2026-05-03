@@ -94,10 +94,11 @@ tracker:
 workspace:
   root: "${workspaceRoot}"
 agent:
+  kind: claude-code
   max_concurrent_agents: 5
   max_turns: 3
-codex:
-  command: "claude"
+  config:
+    command: "claude"
 ---
 Do work on {{ issue.identifier }}`;
   const workflow = parseWorkflowContent(content);
@@ -159,10 +160,10 @@ describe("canDispatch", () => {
       issue: makeIssue({ id: "other" }),
       identifier: "other",
       sessionId: null,
-      codexAppServerPid: null,
-      lastCodexEvent: null,
-      lastCodexTimestamp: null,
-      lastCodexMessage: null,
+      agentPid: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: null,
+      lastAgentMessage: null,
       tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       retryAttempt: 0,
