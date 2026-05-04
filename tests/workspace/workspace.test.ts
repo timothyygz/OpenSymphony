@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { sanitizeKey, validateContainment } from "../../src/workspace/safety.ts";
@@ -36,6 +36,22 @@ describe("validateContainment", () => {
 
   it("rejects sibling paths", () => {
     expect(validateContainment("/tmp/other", "/tmp/ws")).toBe(false);
+  });
+
+  it("rejects symlink escaping root", () => {
+    // Create: root/inside -> /tmp/outside (symlink pointing outside root)
+    const tempRoot = mkdtempSync(join(tmpdir(), "symphony-symlink-"));
+    const outsideDir = mkdtempSync(join(tmpdir(), "symphony-outside-"));
+    try {
+      mkdirSync(join(tempRoot, "inside"));
+      symlinkSync(outsideDir, join(tempRoot, "inside", "escape"));
+
+      // The symlink resolves to outsideDir, which is not under tempRoot
+      expect(validateContainment(join(tempRoot, "inside", "escape"), tempRoot)).toBe(false);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 });
 
