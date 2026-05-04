@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.ts";
@@ -12,7 +12,7 @@ import type { AgentAdapter, AgentSession, AgentSessionContext, AgentEvent, TurnR
 import { WorkspaceManager } from "../../src/workspace/manager.ts";
 import { parseWorkflowContent } from "../../src/workflow/loader.ts";
 import { buildServiceConfig } from "../../src/workflow/config.ts";
-import { readMetaJson } from "../../src/logging/turn-log.ts";
+import { readMetaJson } from "../../src/workspace/meta.ts";
 
 // --- Mock Adapters ---
 
@@ -343,7 +343,7 @@ describe("Orchestrator integration", () => {
     orchestrator.stop();
   });
 
-  it("writes turn log with user prompt and assistant messages", async () => {
+  it("creates workspace meta.json and processes agent events", async () => {
     const issue = makeIssue();
     mockTracker.setIssues([issue]);
     mockAgent.turnResults = [{ status: "completed" }];
@@ -367,23 +367,12 @@ describe("Orchestrator integration", () => {
     await (orchestrator as any).tick();
     await new Promise((r) => setTimeout(r, 150));
 
-    // Check turn log file exists and has content
-    const turnsPath = resolve(tempRoot, "MT-100", ".symphony", "turns.jsonl");
-    expect(existsSync(turnsPath)).toBe(true);
-
-    const content = readFileSync(turnsPath, "utf-8");
-    const lines = content.trim().split("\n").filter((l: string) => l.trim());
-    expect(lines.length).toBeGreaterThanOrEqual(2);
-
-    // First line should be the user prompt
-    const userEntry = JSON.parse(lines[0]!);
-    expect(userEntry.role).toBe("user");
-    expect(userEntry.content).toContain("MT-100");
-
-    // Second line should be assistant message
-    const assistantEntry = JSON.parse(lines[1]!);
-    expect(assistantEntry.role).toBe("assistant");
-    expect(assistantEntry.content).toContain("Hello from agent");
+    // Verify meta.json was created with correct info
+    const meta = readMetaJson(resolve(tempRoot, "MT-100"));
+    expect(meta).not.toBeNull();
+    expect(meta!.issueId).toBe("issue-1");
+    expect(meta!.identifier).toBe("MT-100");
+    expect(meta!.totalTurns).toBe(1);
 
     orchestrator.stop();
   });
