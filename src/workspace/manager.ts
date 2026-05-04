@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import type { Workspace } from "../model/index.ts";
 import type { WorkspaceSource } from "../model/workflow.ts";
 import { sanitizeKey, validateContainment, expandPath } from "./safety.ts";
@@ -110,7 +111,5 @@ export class WorkspaceManager {
 }
 
 export function hashSources(sources: WorkspaceSource[]): string {
-  // Bun supports require for node:crypto
-  const { createHash } = require("node:crypto") as typeof import("node:crypto");
   return createHash("sha256").update(JSON.stringify(sources)).digest("hex").slice(0, 16);
 }
