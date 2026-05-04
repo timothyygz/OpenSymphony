@@ -1,10 +1,12 @@
 ---
 tracker:
   kind: feishu_bitable
-  app_id: <your_app_id>
-  app_secret: <your_app_secret>
-  app_token: "<your_app_token>"
-  table_id: "<your_table_id>"
+  # Credentials read from ~/.open-symphony/settings.json by default.
+  # Override here or use $FEISHU_APP_ID / $FEISHU_APP_SECRET env vars.
+  # app_id: <your_app_id>
+  # app_secret: <your_app_secret>
+  # app_token: "<your_app_token>"
+  # table_id: "<your_table_id>"
   state_field: "状态"
   identifier_field: "编号"
   title_field: "标题"

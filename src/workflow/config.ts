@@ -1,8 +1,44 @@
 import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { serviceConfigSchema, type ServiceConfig } from "../model/index.ts";
 import { ConfigValidationError } from "../errors/errors.ts";
 import { logger } from "../logging/logger.ts";
+
+interface GlobalSettings {
+  tracker?: {
+    feishu?: {
+      app_id?: string;
+      app_secret?: string;
+      app_token?: string;
+      table_id?: string;
+    };
+  };
+}
+
+let _cachedSettings: GlobalSettings | null = null;
+
+export function resetGlobalSettingsCache(): void {
+  _cachedSettings = null;
+}
+
+function loadGlobalSettings(): GlobalSettings {
+  if (_cachedSettings !== null) return _cachedSettings;
+  const settingsPath = process.env.SYMPHONY_SETTINGS_PATH
+    ?? resolve(homedir(), ".open-symphony", "settings.json");
+  if (!existsSync(settingsPath)) {
+    _cachedSettings = {};
+    return _cachedSettings;
+  }
+  try {
+    _cachedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    logger.debug({ path: settingsPath }, "Loaded global settings");
+  } catch (err) {
+    logger.warn({ err, path: settingsPath }, "Failed to load global settings");
+    _cachedSettings = {};
+  }
+  return _cachedSettings;
+}
 
 export function resolveEnvValue(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -61,6 +97,17 @@ export function buildServiceConfig(
 
   if (config.tracker && typeof config.tracker === "object") {
     const tracker = config.tracker as Record<string, unknown>;
+
+    // Merge global settings as defaults for missing credential fields
+    const globals = loadGlobalSettings();
+    if (tracker.kind === "feishu_bitable" && globals.tracker?.feishu) {
+      for (const key of ["app_id", "app_secret", "app_token", "table_id"] as const) {
+        if (tracker[key] === undefined && globals.tracker.feishu[key] !== undefined) {
+          tracker[key] = globals.tracker.feishu[key];
+        }
+      }
+    }
+
     if (typeof tracker.api_key === "string") {
       tracker.api_key = resolveEnvValue(tracker.api_key) as string | undefined;
     }
@@ -100,10 +147,10 @@ export function validateDispatchConfig(config: ServiceConfig): string | null {
     return "tracker.kind is required";
   }
   if (config.tracker.kind === "feishu_bitable") {
-    if (!config.tracker.app_token) return "tracker.app_token is required for feishu_bitable";
-    if (!config.tracker.table_id) return "tracker.table_id is required for feishu_bitable";
-    if (!config.tracker.app_id) return "tracker.app_id ($FEISHU_APP_ID) is required";
-    if (!config.tracker.app_secret) return "tracker.app_secret ($FEISHU_APP_SECRET) is required";
+    if (!config.tracker.app_token) return "tracker.app_token is required (set in WORKFLOW.md or ~/.open-symphony/settings.json)";
+    if (!config.tracker.table_id) return "tracker.table_id is required (set in WORKFLOW.md or ~/.open-symphony/settings.json)";
+    if (!config.tracker.app_id) return "tracker.app_id is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $FEISHU_APP_ID)";
+    if (!config.tracker.app_secret) return "tracker.app_secret is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $FEISHU_APP_SECRET)";
     if (!config.tracker.state_field) return "tracker.state_field is required for feishu_bitable";
     if (!config.tracker.identifier_field) return "tracker.identifier_field is required for feishu_bitable";
     if (!config.tracker.title_field) return "tracker.title_field is required for feishu_bitable";

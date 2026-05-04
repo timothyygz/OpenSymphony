@@ -202,10 +202,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       | undefined;
     if (mcpServers) {
       options.mcpServers = mcpServers;
-      // Auto-allow all MCP tools so bypassPermissions covers them
-      const allowedTools: string[] = [];
+      const allowedTools = [
+        "Edit",
+        "Write",
+        "Read",
+        "Bash",
+        "Glob",
+        "Grep",
+        "LSP",
+        "Agent",
+        "NotebookEdit",
+        "WebSearch",
+      ];
       for (const serverName of Object.keys(mcpServers)) {
-        allowedTools.push(`mcp__${serverName}__*`);
+        allowedTools.push(serverName);
       }
       options.allowedTools = allowedTools;
     }
@@ -230,7 +240,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try {
       for await (const msg of q) {
         logger.debug(
-          { sessionId: session.id, turn, msgType: (msg as any).type, msg },
+          { sessionId: msg.session_id, turn, msgType: (msg as any).type, msg },
           "SDK message",
         );
 
@@ -249,11 +259,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             ? m.message.content
             : [];
           const text = extractTextFromContent(content);
-          const tool = extractToolFromContent(content);
           if (text) {
             logger.info(
               {
-                sessionId: session.id,
+                sessionId: msg.session_id,
                 turn,
                 text:
                   text.length > 300
@@ -261,12 +270,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
                     : text,
               },
               "Assistant text",
-            );
-          }
-          if (tool.name) {
-            logger.info(
-              { sessionId: session.id, turn, tool: tool.name },
-              "Tool use",
             );
           }
         }

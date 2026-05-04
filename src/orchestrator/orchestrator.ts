@@ -775,6 +775,19 @@ export class Orchestrator {
     if (event.sessionId && !entry.sessionId) {
       entry.sessionId = event.sessionId;
       updateMetaJson(workspacePath, { sessionId: event.sessionId });
+
+      // Record join command in tracker so user can resume the session
+      this.deps.tracker
+        .updateIssueJoinCommand?.(
+          issueId,
+          `cd "${workspacePath}" && claude --resume ${event.sessionId}`,
+        )
+        .catch((err) => {
+          logger.warn(
+            { issueId, error: String(err) },
+            "Failed to update join command in tracker",
+          );
+        });
     }
 
     // Log agent events to turn log
