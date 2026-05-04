@@ -1,5 +1,5 @@
 import { logger } from "../logging/logger.ts";
-import type { HistoryStats, PeriodStats } from "../model/session.ts";
+import type { HistoryStats, PeriodStats } from "../model/statistics.ts";
 
 const EMPTY_STATS: PeriodStats = {
   inputTokens: 0,
