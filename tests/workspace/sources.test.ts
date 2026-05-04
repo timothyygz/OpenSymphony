@@ -103,6 +103,30 @@ describe("initSources", () => {
     // First worktree should have been rolled back
     // (the worktree dir might still exist but the worktree reference should be cleaned)
   }, 30000);
+
+  it("creates worktree with branch named from identifier", async () => {
+    // Create a local repo
+    const localRepo = resolve(tempDir, "local-repo");
+    await Bun.spawn(["git", "init", localRepo]).exited;
+    await Bun.spawn(["git", "-C", localRepo, "config", "user.email", "test@test.com"]).exited;
+    await Bun.spawn(["git", "-C", localRepo, "config", "user.name", "Test"]).exited;
+    await Bun.spawn(["sh", "-c", `echo hello > ${localRepo}/readme.md`]).exited;
+    await Bun.spawn(["git", "-C", localRepo, "add", "."]).exited;
+    await Bun.spawn(["git", "-C", localRepo, "commit", "-m", "init"]).exited;
+
+    const sources = [{
+      type: "git-worktree" as const,
+      repo: localRepo,
+      path: "worktree-copy",
+    }];
+
+    await initSources(sources, workspacePath, tempDir, "SYMP-042");
+
+    // Verify the branch was created with the sanitized identifier name
+    const { stdout } = Bun.spawnSync(["git", "-C", localRepo, "branch", "--list", "SYMP-042"]);
+    const output = (stdout?.toString() ?? "").trim();
+    expect(output).toMatch(/\bSYMP-042$/);
+  });
 });
 
 describe("hashSources", () => {

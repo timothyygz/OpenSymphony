@@ -47,7 +47,7 @@ export class WorkspaceManager {
       try {
         // Initialize sources (git clone / worktree) before hooks
         if (this.config.sources.length > 0) {
-          await initSources(this.config.sources, workspacePath, this.config.workflowDir);
+          await initSources(this.config.sources, workspacePath, this.config.workflowDir, identifier);
         }
 
         // Run after_create hook
