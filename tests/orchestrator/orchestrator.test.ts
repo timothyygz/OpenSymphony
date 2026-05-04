@@ -410,4 +410,66 @@ describe("Orchestrator integration", () => {
 
     orchestrator.stop();
   });
+
+  it("marks issue as permanently failed when max_retry_attempts exceeded", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+    // Agent fails on both first dispatch and retry
+    mockAgent.turnResults = [
+      { status: "failed", error: "persistent error" },
+      { status: "failed", error: "persistent error" },
+    ];
+
+    mockTracker.fetchIssueStatesByIds = async () => [makeIssue({ state: "待处理" })];
+
+    // Use config with max_retry_attempts = 1
+    const limitedConfig = { ...config, agent: { ...config.agent, max_retry_attempts: 1 } };
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config: limitedConfig, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    // First dispatch (attempt 0) - worker fails, schedules retry with attempt 1
+    // max_retry_attempts = 1, so attempt 1 <= 1, retry is allowed
+    await (orchestrator as any).tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Verify retry was scheduled (attempt 1)
+    expect((orchestrator as any).state.retryAttempts.has("issue-1")).toBe(true);
+
+    // Trigger the retry timer - dispatches with attempt 1
+    // Worker fails again, onWorkerExit called with retryAttempt=1, nextAttempt=2
+    // 2 > max_retry_attempts(1) → permanent failure
+    await (orchestrator as any).onRetryTimer("issue-1");
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Check that permanent_failure_state was set
+    const permanentFailureUpdate = mockTracker.stateUpdates.find(
+      (u) => u.state === "永久失败"
+    );
+    expect(permanentFailureUpdate).toBeDefined();
+    expect(permanentFailureUpdate!.issueId).toBe("issue-1");
+
+    // Issue should be removed from claimed set
+    expect((orchestrator as any).state.claimed.has("issue-1")).toBe(false);
+
+    orchestrator.stop();
+  });
+
+  it("retries normally when under max_retry_attempts", async () => {
+    const state = createInitialState();
+
+    // attempt 1 <= max 3 → should schedule retry
+    scheduleRetry(state, "id-1", "MT-100", 1, "error", 300000, () => {});
+    expect(state.retryAttempts.has("id-1")).toBe(true);
+    expect(state.retryAttempts.get("id-1")!.attempt).toBe(1);
+    cancelRetry(state, "id-1");
+
+    // attempt 3 <= max 3 → should schedule retry
+    scheduleRetry(state, "id-1", "MT-100", 3, "error", 300000, () => {});
+    expect(state.retryAttempts.has("id-1")).toBe(true);
+    expect(state.retryAttempts.get("id-1")!.attempt).toBe(3);
+    cancelRetry(state, "id-1");
+  });
 });

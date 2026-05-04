@@ -94,6 +94,66 @@ export class Orchestrator {
     this.state.maxConcurrentAgents = config.agent.max_concurrent_agents;
   }
 
+  /**
+   * Schedule a retry or mark the issue as permanently failed when
+   * max_retry_attempts is exceeded.
+   * Returns true if a retry was scheduled, false if permanently failed.
+   */
+  private retryOrFail(
+    issueId: string,
+    identifier: string,
+    nextAttempt: number,
+    error: string | null,
+  ): boolean {
+    const maxAttempts = this.deps.config.agent.max_retry_attempts;
+
+    if (nextAttempt > maxAttempts) {
+      logger.warn(
+        { issueId, identifier, nextAttempt, maxAttempts },
+        "Max retry attempts exceeded, marking as permanently failed",
+      );
+      this.deps.executionLog?.append({
+        event: "permanent_failure",
+        timestamp: new Date().toISOString(),
+        issueId,
+        identifier,
+        attempt: nextAttempt,
+        maxAttempts,
+        error: error ?? undefined,
+      });
+      this.state.claimed.delete(issueId);
+      this.deps.tracker
+        .updateIssueState(issueId, this.deps.config.agent.permanent_failure_state)
+        .catch((err) => {
+          logger.warn(
+            { issueId, error: String(err) },
+            "Failed to mark issue as permanently failed",
+          );
+        });
+      return false;
+    }
+
+    this.deps.executionLog?.append({
+      event: "retry_scheduled",
+      timestamp: new Date().toISOString(),
+      issueId,
+      identifier,
+      attempt: nextAttempt,
+      backoffMs: this.deps.config.agent.max_retry_backoff_ms,
+      reason: error ?? "retry",
+    });
+    scheduleRetry(
+      this.state,
+      issueId,
+      identifier,
+      nextAttempt,
+      error,
+      this.deps.config.agent.max_retry_backoff_ms,
+      (id) => this.onRetryTimer(id),
+    );
+    return true;
+  }
+
   private scheduleTick(): void {
     if (!this.running) return;
     this.state.nextTickAt = Date.now() + this.state.pollIntervalMs;
@@ -234,29 +294,11 @@ export class Orchestrator {
         error: String(err),
       });
       this.state.running.delete(issue.id);
-      this.state.claimed.delete(issue.id);
       // Reset state so retry can re-dispatch
       this.deps.tracker
         .updateIssueState(issue.id, this.deps.config.agent.active_reset_state)
         .catch(() => {});
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        attempt: (attempt ?? 0) + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: String(err),
-      });
-      scheduleRetry(
-        this.state,
-        issue.id,
-        issue.identifier,
-        (attempt ?? 0) + 1,
-        String(err),
-        this.deps.config.agent.max_retry_backoff_ms,
-        (id) => this.onRetryTimer(id),
-      );
+      this.retryOrFail(issue.id, issue.identifier, (attempt ?? 0) + 1, String(err));
     });
   }
 
@@ -490,23 +532,11 @@ export class Orchestrator {
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issueId);
-        this.deps.executionLog?.append({
-          event: "retry_scheduled",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          attempt: entry.retryAttempt + 1,
-          backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-          reason: "stall detected",
-        });
-        scheduleRetry(
-          this.state,
+        this.retryOrFail(
           issueId,
           entry.identifier,
           entry.retryAttempt + 1,
           "stall detected",
-          this.deps.config.agent.max_retry_backoff_ms,
-          (id) => this.onRetryTimer(id),
         );
       }
     }
@@ -668,23 +698,11 @@ export class Orchestrator {
           "Failed to reset issue state for retry",
         );
       }
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: entry.identifier,
-        attempt: entry.retryAttempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: error ?? "worker failed",
-      });
-      scheduleRetry(
-        this.state,
+      this.retryOrFail(
         issueId,
         entry.identifier,
         entry.retryAttempt + 1,
         error ?? "worker failed",
-        this.deps.config.agent.max_retry_backoff_ms,
-        (id) => this.onRetryTimer(id),
       );
     }
   }
@@ -701,23 +719,11 @@ export class Orchestrator {
     try {
       candidates = await this.deps.tracker.fetchCandidateIssues();
     } catch {
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: retry.identifier,
-        attempt: retry.attempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: "retry poll failed",
-      });
-      scheduleRetry(
-        this.state,
+      this.retryOrFail(
         issueId,
         retry.identifier,
         retry.attempt + 1,
         "retry poll failed",
-        this.deps.config.agent.max_retry_backoff_ms,
-        (id) => this.onRetryTimer(id),
       );
       return;
     }
@@ -731,23 +737,11 @@ export class Orchestrator {
     }
 
     if (availableSlots(this.state, this.state.maxConcurrentAgents) <= 0) {
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: retry.identifier,
-        attempt: retry.attempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: "no available orchestrator slots",
-      });
-      scheduleRetry(
-        this.state,
+      this.retryOrFail(
         issueId,
         retry.identifier,
         retry.attempt + 1,
         "no available orchestrator slots",
-        this.deps.config.agent.max_retry_backoff_ms,
-        (id) => this.onRetryTimer(id),
       );
       return;
     }

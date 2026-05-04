@@ -87,12 +87,14 @@ export const agentConfigSchema = z.object({
   max_concurrent_agents: z.number().default(10),
   max_turns: z.number().positive().default(20),
   max_retry_backoff_ms: z.number().default(300000),
+  max_retry_attempts: z.number().default(3),
   max_concurrent_agents_by_state: z.record(z.string(), z.number().positive()).default({} as Record<string, number>),
   // Agent-specific config, passed through to the adapter
   config: z.record(z.string(), z.unknown()).default({}),
   // State names for dispatch/retry transitions (defaults to Chinese for backward compat)
   in_progress_state: z.string().default("进行中"),
   active_reset_state: z.string().default("待处理"),
+  permanent_failure_state: z.string().default("永久失败"),
 });
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 
@@ -103,7 +105,7 @@ export const serviceConfigSchema = z.object({
   polling: pollingConfigSchema.optional().default({ interval_ms: 30000 }),
   workspace: workspaceConfigSchema.optional().default({ root: "", sources: [] }),
   hooks: hooksConfigSchema.optional().default({ timeout_ms: 60000 }),
-  agent: agentConfigSchema.optional().default({ kind: "claude-code", stall_timeout_ms: 300000, max_concurrent_agents: 10, max_turns: 20, max_retry_backoff_ms: 300000, max_concurrent_agents_by_state: {}, config: {}, in_progress_state: "进行中", active_reset_state: "待处理" }),
+  agent: agentConfigSchema.optional().default({ kind: "claude-code", stall_timeout_ms: 300000, max_concurrent_agents: 10, max_turns: 20, max_retry_backoff_ms: 300000, max_retry_attempts: 3, max_concurrent_agents_by_state: {}, config: {}, in_progress_state: "进行中", active_reset_state: "待处理", permanent_failure_state: "永久失败" }),
   server: z.object({
     port: z.number().optional(),
   }).optional(),
