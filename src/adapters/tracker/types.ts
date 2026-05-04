@@ -1,3 +1,4 @@
+import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { Issue, TokenUsage } from "../../model/index.ts";
 
 export interface TrackerAdapter {
@@ -10,6 +11,8 @@ export interface TrackerAdapter {
   updateIssueJoinCommand?(issueId: string, command: string): Promise<void>;
   updateIssueProgress?(issueId: string, progress: string): Promise<void>;
   updateIssueResultSummary?(issueId: string, summary: string): Promise<void>;
+  /** Return MCP server configs for agent tool access, keyed by server name. */
+  getMcpServerConfig?(issueId: string): Record<string, McpServerConfig>;
 }
 
 export type TrackerAdapterFactory = (config: Record<string, unknown>) => TrackerAdapter;
