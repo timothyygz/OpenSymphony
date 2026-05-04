@@ -215,7 +215,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         "WebSearch",
       ];
       for (const serverName of Object.keys(mcpServers)) {
-        allowedTools.push(serverName);
+        allowedTools.push(`mcp__${serverName}__*`);
       }
       options.allowedTools = allowedTools;
     }

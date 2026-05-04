@@ -20,7 +20,16 @@ polling:
   interval_ms: 30000
 
 workspace:
-  root: "/tmp/symphony_workspaces"
+  root: "~/.open-symphony/workspaces"
+  sources:
+    # - type: git-clone
+    #   url: git@github.com:your-org/your-repo.git
+    #   path: repo
+    #   branch: main
+    #   depth: 1
+    - type: git-worktree
+      repo: ~/Workspace/symphony-demo
+      path: repo
 
 hooks:
   after_create: |
