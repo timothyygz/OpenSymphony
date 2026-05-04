@@ -1,44 +1,29 @@
 import type {
   ServiceConfig,
   Issue,
-  RunningEntry,
   WorkflowDefinition,
 } from "../model/index.ts";
 import type { TrackerAdapter } from "../adapters/tracker/types.ts";
-import type {
-  AgentAdapter,
-  AgentEvent,
-  AgentSession,
-} from "../adapters/agent/types.ts";
-import { WorkspaceManager, hashSources } from "../workspace/manager.ts";
-import {
-  renderTemplate,
-  buildContinuationGuidance,
-} from "../workflow/prompt.ts";
-import { runHookIfConfigured, runHookBestEffort } from "../workspace/hooks.ts";
+import type { WorkspaceManager } from "../workspace/manager.ts";
 import {
   createInitialState,
-  isActiveState,
-  isTerminalState,
-  addRuntimeSeconds,
-  addTokenUsage,
 } from "./state.ts";
 import type { OrchestratorState } from "./state.ts";
 import { sortForDispatch, canDispatch, availableSlots } from "./dispatch.ts";
-import { scheduleRetry, cancelRetry } from "./retry.ts";
+import { scheduleRetry } from "./retry.ts";
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
 import type { ExecutionLog } from "../logging/execution-log.ts";
 import type { TokenLog } from "../metrics/token-log.ts";
-import { TurnLog, writeMetaJson, updateMetaJson } from "../logging/turn-log.ts";
-import { createTrackerMcpServer } from "../adapters/agent/claude-code/tracker-tools.ts";
-import { FeishuBitableAdapter } from "../adapters/tracker/feishu-bitable/adapter.ts";
+import { EventProcessor } from "./event-processor.ts";
+import { Reconciler } from "./reconciler.ts";
+import { WorkerRunner } from "./worker-runner.ts";
 
 export interface OrchestratorDeps {
   config: ServiceConfig;
   workflow: WorkflowDefinition;
   tracker: TrackerAdapter;
-  agent: AgentAdapter;
+  agent: import("../adapters/agent/types.ts").AgentAdapter;
   workspaceManager: WorkspaceManager;
   tokenLog?: TokenLog;
   executionLog?: ExecutionLog;
@@ -49,16 +34,49 @@ export class Orchestrator {
   private tickTimer: ReturnType<typeof setTimeout> | null = null;
   private running = true;
 
+  private readonly reconciler: Reconciler;
+  private readonly workerRunner: WorkerRunner;
+  private readonly eventProcessor: EventProcessor;
+
   constructor(private readonly deps: OrchestratorDeps) {
     this.state = createInitialState();
     this.applyConfig(deps.config);
+
+    // Wire sub-modules
+    this.eventProcessor = new EventProcessor({
+      state: this.state,
+      tracker: deps.tracker,
+    });
+
+    this.reconciler = new Reconciler(
+      {
+        state: this.state,
+        config: deps.config,
+        tracker: deps.tracker,
+        workspaceManager: deps.workspaceManager,
+        executionLog: deps.executionLog,
+        tokenLog: deps.tokenLog,
+      },
+      (issueId) => this.onRetryTimer(issueId),
+    );
+
+    this.workerRunner = new WorkerRunner({
+      state: this.state,
+      config: deps.config,
+      workflow: deps.workflow,
+      tracker: deps.tracker,
+      agent: deps.agent,
+      workspaceManager: deps.workspaceManager,
+      executionLog: deps.executionLog,
+      eventProcessor: this.eventProcessor,
+    });
   }
 
   async start(): Promise<void> {
     logger.info("Orchestrator starting");
 
     // Startup terminal workspace cleanup
-    await this.startupCleanup();
+    await this.reconciler.startupCleanup();
 
     // Immediate first tick
     await this.tick();
@@ -106,8 +124,8 @@ export class Orchestrator {
   private async tick(): Promise<void> {
     try {
       // Step 1: Reconcile running issues
-      this.reconcileStalled();
-      await this.reconcileTrackerStates();
+      this.reconciler.reconcileStalled();
+      await this.reconciler.reconcileTrackerStates();
 
       // Step 2: Dispatch preflight validation
       const validationError = validateDispatchConfig(this.deps.config);
@@ -152,466 +170,14 @@ export class Orchestrator {
             this.deps.config.tracker.active_states,
           )
         ) {
-          this.dispatchIssue(issue, null);
+          this.workerRunner.dispatchIssue(issue, null, (id, reason, err) =>
+            this.onWorkerExit(id, reason, err),
+          );
         }
       }
     } catch (err) {
       logger.error({ error: String(err) }, "Tick error");
     }
-  }
-
-  // T27: Dispatch one issue
-  private dispatchIssue(issue: Issue, attempt: number | null): void {
-    // Placeholder — real session ID is captured from Claude Code's stream-json output
-    const sessionId = `${issue.identifier}-${Date.now()}`;
-
-    const entry: RunningEntry = {
-      issue,
-      identifier: issue.identifier,
-      sessionId: null,
-      agentPid: null,
-      lastAgentEvent: null,
-      lastAgentTimestamp: null,
-      lastAgentMessage: null,
-      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      lastReportedTokenUsage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-      },
-      retryAttempt: attempt ?? 0,
-      startedAt: new Date(),
-      turnCount: 0,
-    };
-
-    this.state.running.set(issue.id, entry);
-    this.state.claimed.add(issue.id);
-    cancelRetry(this.state, issue.id);
-
-    // Distributed lock: mark issue as in-progress so other instances skip it
-    const fromState = issue.state;
-    this.deps.tracker
-      .updateIssueState(issue.id, this.deps.config.agent.in_progress_state)
-      .catch((err) => {
-        logger.warn(
-          { issueId: issue.id, error: String(err) },
-          "Failed to mark issue as in-progress",
-        );
-      });
-    this.deps.executionLog?.append({
-      event: "tracker_state_updated",
-      timestamp: new Date().toISOString(),
-      issueId: issue.id,
-      identifier: issue.identifier,
-      fromState,
-      toState: this.deps.config.agent.in_progress_state,
-    });
-
-    logger.info(
-      { issueId: issue.id, identifier: issue.identifier, attempt },
-      "Dispatching issue",
-    );
-
-    this.deps.executionLog?.append({
-      event: "dispatch",
-      timestamp: new Date().toISOString(),
-      issueId: issue.id,
-      identifier: issue.identifier,
-      attempt: attempt ?? 0,
-    });
-
-    // Run worker in background
-    this.runWorker(issue, attempt, sessionId).catch((err) => {
-      logger.error(
-        { issueId: issue.id, error: String(err) },
-        "Worker spawn failed",
-      );
-      this.deps.executionLog?.append({
-        event: "worker_spawn_failed",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        error: String(err),
-      });
-      this.state.running.delete(issue.id);
-      this.state.claimed.delete(issue.id);
-      // Reset state so retry can re-dispatch
-      this.deps.tracker
-        .updateIssueState(issue.id, this.deps.config.agent.active_reset_state)
-        .catch(() => {});
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        attempt: (attempt ?? 0) + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: String(err),
-      });
-      scheduleRetry(
-        this.state,
-        issue.id,
-        issue.identifier,
-        (attempt ?? 0) + 1,
-        String(err),
-        this.deps.config.agent.max_retry_backoff_ms,
-        (id) => this.onRetryTimer(id),
-      );
-    });
-  }
-
-  // T28: Worker attempt flow
-  private async runWorker(
-    issue: Issue,
-    attempt: number | null,
-    sessionId: string,
-  ): Promise<void> {
-    const { config, workflow, agent, workspaceManager } = this.deps;
-    const hooks = config.hooks;
-    let session: AgentSession | null = null;
-
-    try {
-      // Create/reuse workspace
-      const workspace = await workspaceManager.createForIssue(issue.identifier);
-
-      // before_run hook
-      await runHookIfConfigured("before_run", hooks, workspace.path);
-
-      // Create tracker MCP server for agent (if tracker is FeishuBitable)
-      let mcpServers:
-        | Record<
-            string,
-            import("@anthropic-ai/claude-agent-sdk").McpServerConfig
-          >
-        | undefined;
-      if (this.deps.tracker instanceof FeishuBitableAdapter) {
-        const trackerMcpServer = createTrackerMcpServer(
-          this.deps.tracker.api,
-          issue.id,
-        );
-        mcpServers = { tracker: trackerMcpServer };
-      }
-
-      // Start agent session
-      session = await agent.startSession({
-        workspacePath: workspace.path,
-        issue,
-        sessionId,
-        config: config as unknown as Record<string, unknown>,
-        mcpServers,
-      });
-
-      // Update running entry with session info
-      const entry = this.state.running.get(issue.id);
-
-      // Initialize turn log and meta.json
-      let turnLog: TurnLog | null = null;
-      try {
-        turnLog = new TurnLog(workspace.path);
-        const sources = config.workspace.sources ?? [];
-        writeMetaJson(workspace.path, {
-          issueId: issue.id,
-          identifier: issue.identifier,
-          title: issue.title,
-          workspacePath: workspace.path,
-          sessionId: null,
-          startedAt: new Date().toISOString(),
-          totalTurns: 0,
-          totalTokens: 0,
-          sources: sources.length > 0 ? sources : undefined,
-          sourcesHash: sources.length > 0 ? hashSources(sources) : undefined,
-        });
-      } catch (err) {
-        logger.warn(
-          { issueId: issue.id, error: String(err) },
-          "Failed to initialize turn log",
-        );
-      }
-
-      this.deps.executionLog?.append({
-        event: "session_started",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        sessionId,
-      });
-
-      // Turn loop
-      const maxTurns = config.agent.max_turns;
-      let turnNumber = 0;
-      const toolCallsByTurn = new Map<number, string[]>();
-
-      while (turnNumber < maxTurns) {
-        turnNumber++;
-
-        // Build prompt
-        const trackerGuidance = mcpServers
-          ? "\n\nYou have a 'tracker_tool' tool to interact with the Feishu Bitable tracker. " +
-            "Use 'tracker_tool' action='update' to update fields (state, progress, result summary, etc.). " +
-            "When the task is complete, update the result summary and state to mark it done. " +
-            "Use 'tracker_tool' action='get' to read the current record if needed."
-          : "";
-        const prompt =
-          turnNumber === 1
-            ? renderTemplate(workflow.promptTemplate, issue, attempt) +
-              trackerGuidance
-            : buildContinuationGuidance(issue, attempt) + trackerGuidance;
-
-        // Log user prompt
-        turnLog?.logUserPrompt(turnNumber, prompt);
-
-        // Run one turn
-        const turnLogRef = turnLog;
-        const toolCallsRef = toolCallsByTurn;
-        const turnResult = await agent.runTurn(session, prompt, (event) => {
-          this.onAgentEvent(
-            issue.id,
-            event,
-            turnNumber,
-            turnLogRef,
-            toolCallsRef,
-            workspace.path,
-          );
-        });
-
-        if (turnResult.status !== "completed") {
-          // Turn failed
-          this.deps.executionLog?.append({
-            event: "turn_failed",
-            timestamp: new Date().toISOString(),
-            issueId: issue.id,
-            identifier: issue.identifier,
-            turn: turnNumber,
-            error: turnResult.error ?? "unknown",
-          });
-          await runHookBestEffort("after_run", hooks, workspace.path);
-          await agent.stopSession(session);
-          this.onWorkerExit(issue.id, "failed", turnResult.error);
-          return;
-        }
-
-        // Update turn count in running entry
-        const e = this.state.running.get(issue.id);
-        if (e) e.turnCount = turnNumber;
-
-        this.deps.executionLog?.append({
-          event: "turn_completed",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: issue.identifier,
-          turn: turnNumber,
-          inputTokens: e?.tokenUsage.inputTokens ?? 0,
-          outputTokens: e?.tokenUsage.outputTokens ?? 0,
-        });
-
-        // Update meta.json with turn progress
-        if (e) {
-          updateMetaJson(workspace.path, {
-            totalTurns: turnNumber,
-            totalTokens: e.tokenUsage.totalTokens,
-            lastTurnAt: new Date().toISOString(),
-          });
-        }
-
-        // Refresh issue state from tracker
-        let refreshedIssues: Issue[];
-        try {
-          refreshedIssues = await this.deps.tracker.fetchIssueStatesByIds([
-            issue.id,
-          ]);
-        } catch {
-          await runHookBestEffort("after_run", hooks, workspace.path);
-          await agent.stopSession(session);
-          this.onWorkerExit(issue.id, "failed", "issue state refresh error");
-          return;
-        }
-
-        if (refreshedIssues.length > 0) {
-          issue = refreshedIssues[0]!;
-          if (entry) entry.issue = issue;
-        }
-
-        // Check if still active
-        if (!isActiveState(issue.state, config.tracker.active_states)) {
-          logger.info(
-            { issueId: issue.id, state: issue.state },
-            "Issue no longer active, stopping worker",
-          );
-          break;
-        }
-      }
-
-      // Worker finished normally
-      await runHookBestEffort("after_run", hooks, workspace.path);
-      if (session) await agent.stopSession(session);
-      this.onWorkerExit(issue.id, "normal");
-    } catch (err) {
-      logger.error({ issueId: issue.id, error: String(err) }, "Worker error");
-      if (session) await agent.stopSession(session).catch(() => {});
-      this.onWorkerExit(issue.id, "failed", String(err));
-    }
-  }
-
-  // T29: Reconcile
-  private reconcileStalled(): void {
-    const stallTimeoutMs = this.deps.config.agent.stall_timeout_ms;
-    if (stallTimeoutMs <= 0) return; // disabled
-
-    const now = Date.now();
-    for (const [issueId, entry] of this.state.running) {
-      const lastActivity = entry.lastAgentTimestamp ?? entry.startedAt;
-      const elapsed = now - lastActivity.getTime();
-      if (elapsed > stallTimeoutMs) {
-        logger.warn(
-          { issueId, elapsed, stallTimeoutMs },
-          "Stall detected, terminating worker",
-        );
-        this.deps.executionLog?.append({
-          event: "stall_detected",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          elapsed,
-          timeout: stallTimeoutMs,
-        });
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          reason: "stall",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
-        // In Claude Code model, each turn is a separate process,
-        // so stall detection is mainly a safety net.
-        // The running entry will be cleaned up when the worker eventually exits.
-        this.state.running.delete(issueId);
-        addRuntimeSeconds(this.state, entry);
-        this.finalizeWorkerTokens(entry);
-        this.state.claimed.delete(issueId);
-        this.deps.executionLog?.append({
-          event: "retry_scheduled",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          attempt: entry.retryAttempt + 1,
-          backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-          reason: "stall detected",
-        });
-        scheduleRetry(
-          this.state,
-          issueId,
-          entry.identifier,
-          entry.retryAttempt + 1,
-          "stall detected",
-          this.deps.config.agent.max_retry_backoff_ms,
-          (id) => this.onRetryTimer(id),
-        );
-      }
-    }
-  }
-
-  private async reconcileTrackerStates(): Promise<void> {
-    const runningIds = [...this.state.running.keys()];
-    if (runningIds.length === 0) return;
-
-    let refreshed: Issue[];
-    try {
-      refreshed = await this.deps.tracker.fetchIssueStatesByIds(runningIds);
-    } catch (err) {
-      logger.debug(
-        { error: String(err) },
-        "Reconciliation state refresh failed, keeping workers",
-      );
-      return;
-    }
-
-    const activeStates = this.deps.config.tracker.active_states;
-    const terminalStates = this.deps.config.tracker.terminal_states;
-
-    for (const issue of refreshed) {
-      const entry = this.state.running.get(issue.id);
-      if (!entry) continue;
-
-      if (isTerminalState(issue.state, terminalStates)) {
-        logger.info(
-          { issueId: issue.id, state: issue.state },
-          "Issue is terminal, terminating worker",
-        );
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: entry.identifier,
-          reason: "normal",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
-        this.state.running.delete(issue.id);
-        addRuntimeSeconds(this.state, entry);
-        this.finalizeWorkerTokens(entry);
-        this.state.claimed.delete(issue.id);
-        this.deps.workspaceManager
-          .cleanupWorkspace(issue.identifier)
-          .catch(() => {});
-      } else if (isActiveState(issue.state, activeStates)) {
-        // Update in-memory issue snapshot
-        entry.issue = issue;
-      } else {
-        // Non-active, non-terminal: stop without cleanup
-        logger.info(
-          { issueId: issue.id, state: issue.state },
-          "Issue is non-active, stopping worker",
-        );
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: entry.identifier,
-          reason: "external_cancel",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
-        this.state.running.delete(issue.id);
-        addRuntimeSeconds(this.state, entry);
-        this.finalizeWorkerTokens(entry);
-        this.state.claimed.delete(issue.id);
-      }
-    }
-  }
-
-  private finalizeWorkerTokens(entry: RunningEntry): void {
-    addTokenUsage(this.state, entry);
-
-    if (this.deps.tokenLog) {
-      try {
-        this.deps.tokenLog.append({
-          identifier: entry.identifier,
-          issueId: entry.issue.id,
-          inputTokens: entry.tokenUsage.inputTokens,
-          outputTokens: entry.tokenUsage.outputTokens,
-          totalTokens: entry.tokenUsage.totalTokens,
-          turns: entry.turnCount,
-          retryAttempt: entry.retryAttempt,
-          completedAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        logger.warn(
-          { identifier: entry.identifier, error: String(err) },
-          "Token log write failed",
-        );
-      }
-    }
-
-    this.deps.tracker
-      .updateIssueTokens(entry.issue.id, entry.tokenUsage)
-      .catch((err) => {
-        logger.warn(
-          { issueId: entry.issue.id, error: String(err) },
-          "Token tracker update failed",
-        );
-      });
   }
 
   // T31: Worker exit handler
@@ -635,12 +201,9 @@ export class Orchestrator {
 
     this.state.running.delete(issueId);
     this.state.claimed.delete(issueId);
-    addRuntimeSeconds(this.state, entry);
-    this.finalizeWorkerTokens(entry);
+    this.reconciler.finalizeWorkerTokens(entry);
 
     if (reason === "normal") {
-      // Agent is responsible for writing summary and marking completed via bitable tool.
-      // If it didn't, the issue stays in-progress and stall detection will retry it.
       logger.info(
         { issueId },
         "Worker exited normally, agent should have updated tracker",
@@ -752,101 +315,8 @@ export class Orchestrator {
       return;
     }
 
-    this.dispatchIssue(issue, retry.attempt);
-  }
-
-  // Agent event callback
-  private onAgentEvent(
-    issueId: string,
-    event: AgentEvent,
-    turn: number,
-    turnLog: TurnLog | null,
-    toolCallsByTurn: Map<number, string[]> | null,
-    workspacePath: string,
-  ): void {
-    const entry = this.state.running.get(issueId);
-    if (!entry) return;
-
-    entry.lastAgentEvent = event.event;
-    entry.lastAgentTimestamp = new Date(event.timestamp);
-    entry.lastAgentMessage = event.message ?? null;
-
-    // Capture real Claude Code session ID from stream-json output
-    if (event.sessionId && !entry.sessionId) {
-      entry.sessionId = event.sessionId;
-      updateMetaJson(workspacePath, { sessionId: event.sessionId });
-
-      // Record join command in tracker so user can resume the session
-      this.deps.tracker
-        .updateIssueJoinCommand?.(
-          issueId,
-          `cd "${workspacePath}" && claude --resume ${event.sessionId}`,
-        )
-        .catch((err) => {
-          logger.warn(
-            { issueId, error: String(err) },
-            "Failed to update join command in tracker",
-          );
-        });
-    }
-
-    // Log agent events to turn log
-    if (turnLog) {
-      if (
-        event.message &&
-        (event.event === "assistant" || event.event === "message")
-      ) {
-        turnLog.logAssistantMessage(turn, event.message);
-      }
-      if (event.toolName) {
-        turnLog.logToolUse(turn, event.toolName, event.toolInput);
-        toolCallsByTurn?.get(turn)?.push(event.toolName) ??
-          toolCallsByTurn?.set(turn, [event.toolName]);
-      }
-      if (event.event === "tool_result" && event.rawEvent) {
-        const output =
-          typeof event.rawEvent.result === "string"
-            ? event.rawEvent.result
-            : (event.message ?? "");
-        turnLog.logToolResult(turn, event.toolName ?? "unknown", output);
-      }
-    }
-
-    if (event.usage) {
-      // Track deltas to avoid double-counting
-      const delta = {
-        inputTokens:
-          event.usage.inputTokens - entry.lastReportedTokenUsage.inputTokens,
-        outputTokens:
-          event.usage.outputTokens - entry.lastReportedTokenUsage.outputTokens,
-        totalTokens:
-          event.usage.totalTokens - entry.lastReportedTokenUsage.totalTokens,
-      };
-      entry.tokenUsage.inputTokens += Math.max(0, delta.inputTokens);
-      entry.tokenUsage.outputTokens += Math.max(0, delta.outputTokens);
-      entry.tokenUsage.totalTokens += Math.max(0, delta.totalTokens);
-      entry.lastReportedTokenUsage = { ...event.usage };
-    }
-
-    if (event.rateLimits) {
-      this.state.rateLimits = event.rateLimits;
-    }
-  }
-
-  // T34b: Startup cleanup (original)
-  private async startupCleanup(): Promise<void> {
-    try {
-      const terminalIssues = await this.deps.tracker.fetchIssuesByStates(
-        this.deps.config.tracker.terminal_states,
-      );
-      const identifiers = terminalIssues.map((i) => i.identifier);
-      await this.deps.workspaceManager.cleanupTerminalWorkspaces(identifiers);
-      logger.info(
-        { count: identifiers.length },
-        "Startup terminal workspace cleanup done",
-      );
-    } catch (err) {
-      logger.warn({ error: String(err) }, "Startup cleanup failed, continuing");
-    }
+    this.workerRunner.dispatchIssue(issue, retry.attempt, (id, reason, err) =>
+      this.onWorkerExit(id, reason, err),
+    );
   }
 }
