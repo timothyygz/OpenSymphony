@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { logger } from "./logger.ts";
 
 // --- Event types ---
@@ -93,10 +93,10 @@ export type ExecutionEvent =
 export class ExecutionLog {
   constructor(private readonly filePath: string) {}
 
-  append(event: ExecutionEvent): void {
+  async append(event: ExecutionEvent): Promise<void> {
     try {
       const line = JSON.stringify(event) + "\n";
-      appendFileSync(this.filePath, line, "utf-8");
+      await appendFile(this.filePath, line, "utf-8");
     } catch (err) {
       logger.warn({ filePath: this.filePath, error: String(err) }, "Execution log write failed");
     }

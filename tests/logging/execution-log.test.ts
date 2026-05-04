@@ -18,9 +18,9 @@ afterEach(() => {
 
 describe("ExecutionLog", () => {
   describe("append", () => {
-    it("writes a JSONL line for a dispatch event", () => {
+    it("writes a JSONL line for a dispatch event", async () => {
       const log = new ExecutionLog(logPath);
-      log.append({
+      await log.append({
         event: "dispatch",
         timestamp: new Date().toISOString(),
         issueId: "rec_123",
@@ -37,16 +37,16 @@ describe("ExecutionLog", () => {
       expect(parsed.attempt).toBe(0);
     });
 
-    it("appends multiple events", () => {
+    it("appends multiple events", async () => {
       const log = new ExecutionLog(logPath);
-      log.append({
+      await log.append({
         event: "dispatch",
         timestamp: new Date().toISOString(),
         issueId: "rec_123",
         identifier: "SYMP-001",
         attempt: 0,
       });
-      log.append({
+      await log.append({
         event: "worker_exit",
         timestamp: new Date().toISOString(),
         issueId: "rec_123",
@@ -61,11 +61,11 @@ describe("ExecutionLog", () => {
       expect(JSON.parse(lines[1]!).event).toBe("worker_exit");
     });
 
-    it("tolerates write failure gracefully (read-only dir)", () => {
+    it("tolerates write failure gracefully (read-only dir)", async () => {
       const readOnlyPath = "/dev/null/impossible-path/test.jsonl";
       const log = new ExecutionLog(readOnlyPath);
       // Should not throw
-      log.append({
+      await log.append({
         event: "dispatch",
         timestamp: new Date().toISOString(),
         issueId: "rec_123",
@@ -78,21 +78,21 @@ describe("ExecutionLog", () => {
   describe("queryByIdentifier", () => {
     it("returns events matching the identifier", async () => {
       const log = new ExecutionLog(logPath);
-      log.append({
+      await log.append({
         event: "dispatch",
         timestamp: "2026-05-03T10:00:00.000Z",
         issueId: "rec_1",
         identifier: "SYMP-001",
         attempt: 0,
       });
-      log.append({
+      await log.append({
         event: "dispatch",
         timestamp: "2026-05-03T10:00:01.000Z",
         issueId: "rec_2",
         identifier: "SYMP-002",
         attempt: 0,
       });
-      log.append({
+      await log.append({
         event: "worker_exit",
         timestamp: "2026-05-03T10:05:00.000Z",
         issueId: "rec_1",
@@ -116,7 +116,7 @@ describe("ExecutionLog", () => {
 
     it("returns empty array when no events match", async () => {
       const log = new ExecutionLog(logPath);
-      log.append({
+      await log.append({
         event: "dispatch",
         timestamp: new Date().toISOString(),
         issueId: "rec_1",

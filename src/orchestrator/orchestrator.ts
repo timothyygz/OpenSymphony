@@ -309,7 +309,7 @@ export class Orchestrator {
       try {
         turnLog = new TurnLog(workspace.path);
         const sources = config.workspace.sources ?? [];
-        writeMetaJson(workspace.path, {
+        await writeMetaJson(workspace.path, {
           issueId: issue.id,
           identifier: issue.identifier,
           title: issue.title,
@@ -406,7 +406,7 @@ export class Orchestrator {
 
         // Update meta.json with turn progress
         if (e) {
-          updateMetaJson(workspace.path, {
+          await updateMetaJson(workspace.path, {
             totalTurns: turnNumber,
             totalTokens: e.tokenUsage.totalTokens,
             lastTurnAt: new Date().toISOString(),
@@ -774,7 +774,7 @@ export class Orchestrator {
     // Capture real Claude Code session ID from stream-json output
     if (event.sessionId && !entry.sessionId) {
       entry.sessionId = event.sessionId;
-      updateMetaJson(workspacePath, { sessionId: event.sessionId });
+      void updateMetaJson(workspacePath, { sessionId: event.sessionId });
 
       // Record join command in tracker so user can resume the session
       this.deps.tracker

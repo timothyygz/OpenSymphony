@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { logger } from "../logging/logger.ts";
 
 export interface TokenRecord {
@@ -15,9 +15,13 @@ export interface TokenRecord {
 export class TokenLog {
   constructor(private readonly filePath: string) {}
 
-  append(record: TokenRecord): void {
-    const line = JSON.stringify(record) + "\n";
-    appendFileSync(this.filePath, line, "utf-8");
+  async append(record: TokenRecord): Promise<void> {
+    try {
+      const line = JSON.stringify(record) + "\n";
+      await appendFile(this.filePath, line, "utf-8");
+    } catch (err) {
+      logger.warn({ error: String(err) }, "Token log write failed");
+    }
   }
 
   async summary(): Promise<{ totalInput: number; totalOutput: number; totalTokens: number; issueCount: number }> {

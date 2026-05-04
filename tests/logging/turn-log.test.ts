@@ -20,9 +20,9 @@ describe("TurnLog", () => {
     expect(existsSync(resolve(tempDir, SYMPHONY_DIR))).toBe(true);
   });
 
-  it("appends user prompt as JSONL", () => {
+  it("appends user prompt as JSONL", async () => {
     const log = new TurnLog(tempDir);
-    log.logUserPrompt(1, "Hello agent");
+    await log.logUserPrompt(1, "Hello agent");
 
     const content = readFileSync(resolve(tempDir, SYMPHONY_DIR, TURNS_FILE), "utf-8");
     const lines = content.trim().split("\n");
@@ -34,12 +34,12 @@ describe("TurnLog", () => {
     expect(entry.content).toBe("Hello agent");
   });
 
-  it("appends multiple entries", () => {
+  it("appends multiple entries", async () => {
     const log = new TurnLog(tempDir);
-    log.logUserPrompt(1, "Do task");
-    log.logAssistantMessage(1, "Working on it");
-    log.logToolUse(1, "Read", { file_path: "src/main.ts" });
-    log.logToolResult(1, "Read", "file contents");
+    await log.logUserPrompt(1, "Do task");
+    await log.logAssistantMessage(1, "Working on it");
+    await log.logToolUse(1, "Read", { file_path: "src/main.ts" });
+    await log.logToolResult(1, "Read", "file contents");
 
     const content = readFileSync(resolve(tempDir, SYMPHONY_DIR, TURNS_FILE), "utf-8");
     const lines = content.trim().split("\n");
@@ -50,10 +50,10 @@ describe("TurnLog", () => {
     expect(toolResult.tool).toBe("Read");
   });
 
-  it("truncates large tool output", () => {
+  it("truncates large tool output", async () => {
     const log = new TurnLog(tempDir);
     const longOutput = "x".repeat(15000);
-    log.logToolResult(1, "Bash", longOutput);
+    await log.logToolResult(1, "Bash", longOutput);
 
     const content = readFileSync(resolve(tempDir, SYMPHONY_DIR, TURNS_FILE), "utf-8");
     const entry = JSON.parse(content.trim());
@@ -74,7 +74,7 @@ describe("meta.json", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("writes and reads meta.json", () => {
+  it("writes and reads meta.json", async () => {
     const meta = {
       issueId: "rec123",
       identifier: "SYM-001",
@@ -87,16 +87,16 @@ describe("meta.json", () => {
       totalTokens: 0,
     };
 
-    writeMetaJson(tempDir, meta);
-    const read = readMetaJson(tempDir);
+    await writeMetaJson(tempDir, meta);
+    const read = await readMetaJson(tempDir);
 
     expect(read).not.toBeNull();
     expect(read!.issueId).toBe("rec123");
     expect(read!.identifier).toBe("SYM-001");
   });
 
-  it("updates meta.json partially", () => {
-    writeMetaJson(tempDir, {
+  it("updates meta.json partially", async () => {
+    await writeMetaJson(tempDir, {
       issueId: "rec123",
       identifier: "SYM-001",
       title: "Test",
@@ -108,21 +108,21 @@ describe("meta.json", () => {
       totalTokens: 0,
     });
 
-    updateMetaJson(tempDir, { totalTurns: 3, totalTokens: 5000 });
+    await updateMetaJson(tempDir, { totalTurns: 3, totalTokens: 5000 });
 
-    const read = readMetaJson(tempDir);
+    const read = await readMetaJson(tempDir);
     expect(read!.totalTurns).toBe(3);
     expect(read!.totalTokens).toBe(5000);
     expect(read!.identifier).toBe("SYM-001"); // unchanged
   });
 
-  it("returns null for missing meta.json", () => {
-    const read = readMetaJson("/nonexistent/path");
+  it("returns null for missing meta.json", async () => {
+    const read = await readMetaJson("/nonexistent/path");
     expect(read).toBeNull();
   });
 
-  it("stores sources and sourcesHash", () => {
-    writeMetaJson(tempDir, {
+  it("stores sources and sourcesHash", async () => {
+    await writeMetaJson(tempDir, {
       issueId: "rec123",
       identifier: "SYM-001",
       title: "Test",
@@ -136,7 +136,7 @@ describe("meta.json", () => {
       sourcesHash: "abc123",
     });
 
-    const read = readMetaJson(tempDir);
+    const read = await readMetaJson(tempDir);
     expect(read!.sources).toHaveLength(1);
     expect(read!.sourcesHash).toBe("abc123");
   });

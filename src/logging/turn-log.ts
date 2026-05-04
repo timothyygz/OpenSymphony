@@ -1,5 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { appendFile, writeFile, readFile, access } from "node:fs/promises";
+import { resolve } from "node:path";
 import { logger } from "./logger.ts";
 import type { WorkspaceSource } from "../model/workflow.ts";
 
@@ -37,32 +38,32 @@ export class TurnLog {
     ensureSymphonyDir(workspacePath);
   }
 
-  append(entry: TurnLogEntry): void {
+  async append(entry: TurnLogEntry): Promise<void> {
     try {
       const line = JSON.stringify(entry) + "\n";
-      appendFileSync(this.logPath(), line, "utf-8");
+      await appendFile(this.logPath(), line, "utf-8");
     } catch (err) {
       logger.warn({ error: String(err) }, "Turn log write failed");
     }
   }
 
-  logUserPrompt(turn: number, content: string): void {
-    this.append({ turn, role: "user", content, timestamp: new Date().toISOString() });
+  async logUserPrompt(turn: number, content: string): Promise<void> {
+    await this.append({ turn, role: "user", content, timestamp: new Date().toISOString() });
   }
 
-  logAssistantMessage(turn: number, content: string): void {
-    this.append({ turn, role: "assistant", content, timestamp: new Date().toISOString() });
+  async logAssistantMessage(turn: number, content: string): Promise<void> {
+    await this.append({ turn, role: "assistant", content, timestamp: new Date().toISOString() });
   }
 
-  logToolUse(turn: number, tool: string, input: unknown): void {
-    this.append({ turn, role: "tool_use", tool, input, timestamp: new Date().toISOString() });
+  async logToolUse(turn: number, tool: string, input: unknown): Promise<void> {
+    await this.append({ turn, role: "tool_use", tool, input, timestamp: new Date().toISOString() });
   }
 
-  logToolResult(turn: number, tool: string, output: string): void {
+  async logToolResult(turn: number, tool: string, output: string): Promise<void> {
     const truncated = output.length > MAX_TOOL_OUTPUT
       ? output.slice(0, MAX_TOOL_OUTPUT) + "...[truncated]"
       : output;
-    this.append({ turn, role: "tool_result", tool, output: truncated, timestamp: new Date().toISOString() });
+    await this.append({ turn, role: "tool_result", tool, output: truncated, timestamp: new Date().toISOString() });
   }
 
   private logPath(): string {
@@ -78,26 +79,27 @@ export function ensureSymphonyDir(workspacePath: string): string {
   return dir;
 }
 
-export function writeMetaJson(workspacePath: string, meta: SessionMeta): void {
+export async function writeMetaJson(workspacePath: string, meta: SessionMeta): Promise<void> {
   const filePath = resolve(workspacePath, SYMPHONY_DIR, META_FILE);
   try {
-    writeFileSync(filePath, JSON.stringify(meta, null, 2), "utf-8");
+    await writeFile(filePath, JSON.stringify(meta, null, 2), "utf-8");
   } catch (err) {
     logger.warn({ error: String(err) }, "meta.json write failed");
   }
 }
 
-export function updateMetaJson(workspacePath: string, updates: Partial<SessionMeta>): void {
-  const current = readMetaJson(workspacePath);
+export async function updateMetaJson(workspacePath: string, updates: Partial<SessionMeta>): Promise<void> {
+  const current = await readMetaJson(workspacePath);
   if (!current) return;
-  writeMetaJson(workspacePath, { ...current, ...updates });
+  await writeMetaJson(workspacePath, { ...current, ...updates });
 }
 
-export function readMetaJson(workspacePath: string): SessionMeta | null {
+export async function readMetaJson(workspacePath: string): Promise<SessionMeta | null> {
   const filePath = resolve(workspacePath, SYMPHONY_DIR, META_FILE);
   try {
-    if (!existsSync(filePath)) return null;
-    return JSON.parse(readFileSync(filePath, "utf-8")) as SessionMeta;
+    await access(filePath);
+    const content = await readFile(filePath, "utf-8");
+    return JSON.parse(content) as SessionMeta;
   } catch {
     return null;
   }
