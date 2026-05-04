@@ -27,7 +27,7 @@ export interface FeishuBitableConfig {
 export class FeishuBitableAdapter implements TrackerAdapter {
   readonly kind = "feishu_bitable";
   private readonly auth: FeishuAuth;
-  private readonly api: FeishuBitableApi;
+  readonly api: FeishuBitableApi;
   private readonly fieldMapping: FieldMapping;
   private readonly tokensField: string | undefined;
   private readonly joinCommandField: string | undefined;

@@ -43,15 +43,17 @@ function parseCli(args: string[]) {
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith("--")) {
-      const key = args[i].slice(2);
+    const arg = args[i];
+    if (!arg) continue;
+    if (arg.startsWith("--")) {
+      const key = arg.slice(2);
       const value = args[i + 1];
       if (value && !value.startsWith("--")) {
         options[key] = value;
         i++;
       }
     } else {
-      positionals.push(args[i]);
+      positionals.push(arg);
     }
   }
 

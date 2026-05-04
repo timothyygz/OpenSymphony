@@ -1,10 +1,28 @@
-import type { ServiceConfig, Issue, RunningEntry, WorkflowDefinition } from "../model/index.ts";
+import type {
+  ServiceConfig,
+  Issue,
+  RunningEntry,
+  WorkflowDefinition,
+} from "../model/index.ts";
 import type { TrackerAdapter } from "../adapters/tracker/types.ts";
-import type { AgentAdapter, AgentEvent, AgentSession } from "../adapters/agent/types.ts";
+import type {
+  AgentAdapter,
+  AgentEvent,
+  AgentSession,
+} from "../adapters/agent/types.ts";
 import { WorkspaceManager, hashSources } from "../workspace/manager.ts";
-import { renderTemplate, buildContinuationGuidance } from "../workflow/prompt.ts";
+import {
+  renderTemplate,
+  buildContinuationGuidance,
+} from "../workflow/prompt.ts";
 import { runHookIfConfigured, runHookBestEffort } from "../workspace/hooks.ts";
-import { createInitialState, isActiveState, isTerminalState, addRuntimeSeconds, addTokenUsage } from "./state.ts";
+import {
+  createInitialState,
+  isActiveState,
+  isTerminalState,
+  addRuntimeSeconds,
+  addTokenUsage,
+} from "./state.ts";
 import type { OrchestratorState } from "./state.ts";
 import { sortForDispatch, canDispatch, availableSlots } from "./dispatch.ts";
 import { scheduleRetry, cancelRetry } from "./retry.ts";
@@ -13,6 +31,8 @@ import { logger } from "../logging/logger.ts";
 import type { ExecutionLog } from "../logging/execution-log.ts";
 import type { TokenLog } from "../metrics/token-log.ts";
 import { TurnLog, writeMetaJson, updateMetaJson } from "../logging/turn-log.ts";
+import { createTrackerMcpServer } from "../adapters/agent/claude-code/tracker-tools.ts";
+import { FeishuBitableAdapter } from "../adapters/tracker/feishu-bitable/adapter.ts";
 
 export interface OrchestratorDeps {
   config: ServiceConfig;
@@ -92,7 +112,10 @@ export class Orchestrator {
       // Step 2: Dispatch preflight validation
       const validationError = validateDispatchConfig(this.deps.config);
       if (validationError) {
-        logger.error({ error: validationError }, "Dispatch validation failed, skipping dispatch");
+        logger.error(
+          { error: validationError },
+          "Dispatch validation failed, skipping dispatch",
+        );
         return;
       }
 
@@ -101,7 +124,10 @@ export class Orchestrator {
       try {
         issues = await this.deps.tracker.fetchCandidateIssues();
       } catch (err) {
-        logger.error({ error: String(err) }, "Failed to fetch candidate issues");
+        logger.error(
+          { error: String(err) },
+          "Failed to fetch candidate issues",
+        );
         return;
       }
 
@@ -114,9 +140,18 @@ export class Orchestrator {
       );
 
       for (const issue of sorted) {
-        if (availableSlots(this.state, this.state.maxConcurrentAgents) <= 0) break;
+        if (availableSlots(this.state, this.state.maxConcurrentAgents) <= 0)
+          break;
 
-        if (canDispatch(issue, this.state, this.state.maxConcurrentAgents, perStateMap, this.deps.config.tracker.active_states)) {
+        if (
+          canDispatch(
+            issue,
+            this.state,
+            this.state.maxConcurrentAgents,
+            perStateMap,
+            this.deps.config.tracker.active_states,
+          )
+        ) {
           this.dispatchIssue(issue, null);
         }
       }
@@ -139,7 +174,11 @@ export class Orchestrator {
       lastAgentTimestamp: null,
       lastAgentMessage: null,
       tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      lastReportedTokenUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+      },
       retryAttempt: attempt ?? 0,
       startedAt: new Date(),
       turnCount: 0,
@@ -151,9 +190,14 @@ export class Orchestrator {
 
     // Distributed lock: mark issue as in-progress so other instances skip it
     const fromState = issue.state;
-    this.deps.tracker.updateIssueState(issue.id, this.deps.config.agent.in_progress_state).catch((err) => {
-      logger.warn({ issueId: issue.id, error: String(err) }, "Failed to mark issue as in-progress");
-    });
+    this.deps.tracker
+      .updateIssueState(issue.id, this.deps.config.agent.in_progress_state)
+      .catch((err) => {
+        logger.warn(
+          { issueId: issue.id, error: String(err) },
+          "Failed to mark issue as in-progress",
+        );
+      });
     this.deps.executionLog?.append({
       event: "tracker_state_updated",
       timestamp: new Date().toISOString(),
@@ -163,13 +207,10 @@ export class Orchestrator {
       toState: this.deps.config.agent.in_progress_state,
     });
 
-    logger.info({ issueId: issue.id, identifier: issue.identifier, attempt }, "Dispatching issue");
-
-    // Write initial join command (updated with real session ID after first turn)
-    const workspacePath = `${this.deps.config.workspace.root}/${issue.identifier.replace(/[^A-Za-z0-9._-]/g, "_")}`;
-    this.deps.tracker.updateIssueJoinCommand?.(issue.id, `cd ${workspacePath} && claude --resume`).catch((err) => {
-      logger.warn({ issueId: issue.id, error: String(err) }, "Failed to write join command");
-    });
+    logger.info(
+      { issueId: issue.id, identifier: issue.identifier, attempt },
+      "Dispatching issue",
+    );
 
     this.deps.executionLog?.append({
       event: "dispatch",
@@ -181,7 +222,10 @@ export class Orchestrator {
 
     // Run worker in background
     this.runWorker(issue, attempt, sessionId).catch((err) => {
-      logger.error({ issueId: issue.id, error: String(err) }, "Worker spawn failed");
+      logger.error(
+        { issueId: issue.id, error: String(err) },
+        "Worker spawn failed",
+      );
       this.deps.executionLog?.append({
         event: "worker_spawn_failed",
         timestamp: new Date().toISOString(),
@@ -192,7 +236,9 @@ export class Orchestrator {
       this.state.running.delete(issue.id);
       this.state.claimed.delete(issue.id);
       // Reset state so retry can re-dispatch
-      this.deps.tracker.updateIssueState(issue.id, this.deps.config.agent.active_reset_state).catch(() => {});
+      this.deps.tracker
+        .updateIssueState(issue.id, this.deps.config.agent.active_reset_state)
+        .catch(() => {});
       this.deps.executionLog?.append({
         event: "retry_scheduled",
         timestamp: new Date().toISOString(),
@@ -215,7 +261,11 @@ export class Orchestrator {
   }
 
   // T28: Worker attempt flow
-  private async runWorker(issue: Issue, attempt: number | null, sessionId: string): Promise<void> {
+  private async runWorker(
+    issue: Issue,
+    attempt: number | null,
+    sessionId: string,
+  ): Promise<void> {
     const { config, workflow, agent, workspaceManager } = this.deps;
     const hooks = config.hooks;
     let session: AgentSession | null = null;
@@ -227,17 +277,32 @@ export class Orchestrator {
       // before_run hook
       await runHookIfConfigured("before_run", hooks, workspace.path);
 
+      // Create tracker MCP server for agent (if tracker is FeishuBitable)
+      let mcpServers:
+        | Record<
+            string,
+            import("@anthropic-ai/claude-agent-sdk").McpServerConfig
+          >
+        | undefined;
+      if (this.deps.tracker instanceof FeishuBitableAdapter) {
+        const trackerMcpServer = createTrackerMcpServer(
+          this.deps.tracker.api,
+          issue.id,
+        );
+        mcpServers = { tracker: trackerMcpServer };
+      }
+
       // Start agent session
       session = await agent.startSession({
         workspacePath: workspace.path,
         issue,
         sessionId,
-        config: (config as unknown) as Record<string, unknown>,
+        config: config as unknown as Record<string, unknown>,
+        mcpServers,
       });
 
       // Update running entry with session info
       const entry = this.state.running.get(issue.id);
-      if (entry) entry.sessionId = sessionId;
 
       // Initialize turn log and meta.json
       let turnLog: TurnLog | null = null;
@@ -250,7 +315,6 @@ export class Orchestrator {
           title: issue.title,
           workspacePath: workspace.path,
           sessionId: null,
-          joinCommand: `cd ${workspace.path} && claude --resume`,
           startedAt: new Date().toISOString(),
           totalTurns: 0,
           totalTokens: 0,
@@ -258,7 +322,10 @@ export class Orchestrator {
           sourcesHash: sources.length > 0 ? hashSources(sources) : undefined,
         });
       } catch (err) {
-        logger.warn({ issueId: issue.id, error: String(err) }, "Failed to initialize turn log");
+        logger.warn(
+          { issueId: issue.id, error: String(err) },
+          "Failed to initialize turn log",
+        );
       }
 
       this.deps.executionLog?.append({
@@ -278,9 +345,17 @@ export class Orchestrator {
         turnNumber++;
 
         // Build prompt
-        const prompt = turnNumber === 1
-          ? renderTemplate(workflow.promptTemplate, issue, attempt)
-          : buildContinuationGuidance(issue, attempt);
+        const trackerGuidance = mcpServers
+          ? "\n\nYou have a 'tracker_tool' tool to interact with the Feishu Bitable tracker. " +
+            "Use 'tracker_tool' action='update' to update fields (state, progress, result summary, etc.). " +
+            "When the task is complete, update the result summary and state to mark it done. " +
+            "Use 'tracker_tool' action='get' to read the current record if needed."
+          : "";
+        const prompt =
+          turnNumber === 1
+            ? renderTemplate(workflow.promptTemplate, issue, attempt) +
+              trackerGuidance
+            : buildContinuationGuidance(issue, attempt) + trackerGuidance;
 
         // Log user prompt
         turnLog?.logUserPrompt(turnNumber, prompt);
@@ -289,7 +364,14 @@ export class Orchestrator {
         const turnLogRef = turnLog;
         const toolCallsRef = toolCallsByTurn;
         const turnResult = await agent.runTurn(session, prompt, (event) => {
-          this.onAgentEvent(issue.id, event, turnNumber, turnLogRef, toolCallsRef, workspace.path);
+          this.onAgentEvent(
+            issue.id,
+            event,
+            turnNumber,
+            turnLogRef,
+            toolCallsRef,
+            workspace.path,
+          );
         });
 
         if (turnResult.status !== "completed") {
@@ -331,13 +413,12 @@ export class Orchestrator {
           });
         }
 
-        // Write progress to tracker
-        this.updateProgress(issue.id, turnNumber, maxTurns, e);
-
         // Refresh issue state from tracker
         let refreshedIssues: Issue[];
         try {
-          refreshedIssues = await this.deps.tracker.fetchIssueStatesByIds([issue.id]);
+          refreshedIssues = await this.deps.tracker.fetchIssueStatesByIds([
+            issue.id,
+          ]);
         } catch {
           await runHookBestEffort("after_run", hooks, workspace.path);
           await agent.stopSession(session);
@@ -352,7 +433,10 @@ export class Orchestrator {
 
         // Check if still active
         if (!isActiveState(issue.state, config.tracker.active_states)) {
-          logger.info({ issueId: issue.id, state: issue.state }, "Issue no longer active, stopping worker");
+          logger.info(
+            { issueId: issue.id, state: issue.state },
+            "Issue no longer active, stopping worker",
+          );
           break;
         }
       }
@@ -378,7 +462,10 @@ export class Orchestrator {
       const lastActivity = entry.lastAgentTimestamp ?? entry.startedAt;
       const elapsed = now - lastActivity.getTime();
       if (elapsed > stallTimeoutMs) {
-        logger.warn({ issueId, elapsed, stallTimeoutMs }, "Stall detected, terminating worker");
+        logger.warn(
+          { issueId, elapsed, stallTimeoutMs },
+          "Stall detected, terminating worker",
+        );
         this.deps.executionLog?.append({
           event: "stall_detected",
           timestamp: new Date().toISOString(),
@@ -433,7 +520,10 @@ export class Orchestrator {
     try {
       refreshed = await this.deps.tracker.fetchIssueStatesByIds(runningIds);
     } catch (err) {
-      logger.debug({ error: String(err) }, "Reconciliation state refresh failed, keeping workers");
+      logger.debug(
+        { error: String(err) },
+        "Reconciliation state refresh failed, keeping workers",
+      );
       return;
     }
 
@@ -445,7 +535,10 @@ export class Orchestrator {
       if (!entry) continue;
 
       if (isTerminalState(issue.state, terminalStates)) {
-        logger.info({ issueId: issue.id, state: issue.state }, "Issue is terminal, terminating worker");
+        logger.info(
+          { issueId: issue.id, state: issue.state },
+          "Issue is terminal, terminating worker",
+        );
         this.deps.executionLog?.append({
           event: "worker_exit",
           timestamp: new Date().toISOString(),
@@ -459,13 +552,18 @@ export class Orchestrator {
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issue.id);
-        this.deps.workspaceManager.cleanupWorkspace(issue.identifier).catch(() => {});
+        this.deps.workspaceManager
+          .cleanupWorkspace(issue.identifier)
+          .catch(() => {});
       } else if (isActiveState(issue.state, activeStates)) {
         // Update in-memory issue snapshot
         entry.issue = issue;
       } else {
         // Non-active, non-terminal: stop without cleanup
-        logger.info({ issueId: issue.id, state: issue.state }, "Issue is non-active, stopping worker");
+        logger.info(
+          { issueId: issue.id, state: issue.state },
+          "Issue is non-active, stopping worker",
+        );
         this.deps.executionLog?.append({
           event: "worker_exit",
           timestamp: new Date().toISOString(),
@@ -499,17 +597,29 @@ export class Orchestrator {
           completedAt: new Date().toISOString(),
         });
       } catch (err) {
-        logger.warn({ identifier: entry.identifier, error: String(err) }, "Token log write failed");
+        logger.warn(
+          { identifier: entry.identifier, error: String(err) },
+          "Token log write failed",
+        );
       }
     }
 
-    this.deps.tracker.updateIssueTokens(entry.issue.id, entry.tokenUsage).catch((err) => {
-      logger.warn({ issueId: entry.issue.id, error: String(err) }, "Token tracker update failed");
-    });
+    this.deps.tracker
+      .updateIssueTokens(entry.issue.id, entry.tokenUsage)
+      .catch((err) => {
+        logger.warn(
+          { issueId: entry.issue.id, error: String(err) },
+          "Token tracker update failed",
+        );
+      });
   }
 
   // T31: Worker exit handler
-  private async onWorkerExit(issueId: string, reason: "normal" | "failed", error?: string | null): Promise<void> {
+  private async onWorkerExit(
+    issueId: string,
+    reason: "normal" | "failed",
+    error?: string | null,
+  ): Promise<void> {
     const entry = this.state.running.get(issueId);
     if (!entry) return;
 
@@ -529,34 +639,20 @@ export class Orchestrator {
     this.finalizeWorkerTokens(entry);
 
     if (reason === "normal") {
-      // Write result summary
-      if (entry.lastAgentMessage) {
-        const summary = entry.lastAgentMessage.length > 1000
-          ? entry.lastAgentMessage.slice(0, 1000) + "..."
-          : entry.lastAgentMessage;
-        this.deps.tracker.updateIssueResultSummary?.(issueId, summary).catch(() => {});
-      }
-      // Mark issue as completed in tracker
-      const terminalState = this.deps.config.tracker.terminal_states[0] ?? "已完成";
-      try {
-        await this.deps.tracker.updateIssueState(issueId, terminalState);
-        logger.info({ issueId, state: terminalState }, "Issue marked as completed in tracker");
-        this.deps.executionLog?.append({
-          event: "tracker_state_updated",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          fromState: entry.issue.state,
-          toState: terminalState,
-        });
-      } catch (err) {
-        logger.warn({ issueId, error: String(err) }, "Failed to update issue state in tracker");
-      }
+      // Agent is responsible for writing summary and marking completed via bitable tool.
+      // If it didn't, the issue stays in-progress and stall detection will retry it.
+      logger.info(
+        { issueId },
+        "Worker exited normally, agent should have updated tracker",
+      );
       this.state.completed.add(issueId);
     } else {
       // Reset to active state so retry can re-dispatch
       try {
-        await this.deps.tracker.updateIssueState(issueId, this.deps.config.agent.active_reset_state);
+        await this.deps.tracker.updateIssueState(
+          issueId,
+          this.deps.config.agent.active_reset_state,
+        );
         logger.info({ issueId }, "Issue reset to active state for retry");
         this.deps.executionLog?.append({
           event: "tracker_state_updated",
@@ -567,7 +663,10 @@ export class Orchestrator {
           toState: this.deps.config.agent.active_reset_state,
         });
       } catch (err) {
-        logger.warn({ issueId, error: String(err) }, "Failed to reset issue state for retry");
+        logger.warn(
+          { issueId, error: String(err) },
+          "Failed to reset issue state for retry",
+        );
       }
       this.deps.executionLog?.append({
         event: "retry_scheduled",
@@ -675,16 +774,15 @@ export class Orchestrator {
     // Capture real Claude Code session ID from stream-json output
     if (event.sessionId && !entry.sessionId) {
       entry.sessionId = event.sessionId;
-      const joinCommand = `cd ${workspacePath} && claude --resume ${event.sessionId}`;
-      this.deps.tracker.updateIssueJoinCommand?.(issueId, joinCommand).catch((err) => {
-        logger.warn({ issueId, error: String(err) }, "Failed to update join command with real session ID");
-      });
-      updateMetaJson(workspacePath, { sessionId: event.sessionId, joinCommand });
+      updateMetaJson(workspacePath, { sessionId: event.sessionId });
     }
 
     // Log agent events to turn log
     if (turnLog) {
-      if (event.message && (event.event === "assistant" || event.event === "message")) {
+      if (
+        event.message &&
+        (event.event === "assistant" || event.event === "message")
+      ) {
         turnLog.logAssistantMessage(turn, event.message);
       }
       if (event.toolName) {
@@ -693,9 +791,10 @@ export class Orchestrator {
           toolCallsByTurn?.set(turn, [event.toolName]);
       }
       if (event.event === "tool_result" && event.rawEvent) {
-        const output = typeof event.rawEvent.result === "string"
-          ? event.rawEvent.result
-          : event.message ?? "";
+        const output =
+          typeof event.rawEvent.result === "string"
+            ? event.rawEvent.result
+            : (event.message ?? "");
         turnLog.logToolResult(turn, event.toolName ?? "unknown", output);
       }
     }
@@ -703,9 +802,12 @@ export class Orchestrator {
     if (event.usage) {
       // Track deltas to avoid double-counting
       const delta = {
-        inputTokens: event.usage.inputTokens - entry.lastReportedTokenUsage.inputTokens,
-        outputTokens: event.usage.outputTokens - entry.lastReportedTokenUsage.outputTokens,
-        totalTokens: event.usage.totalTokens - entry.lastReportedTokenUsage.totalTokens,
+        inputTokens:
+          event.usage.inputTokens - entry.lastReportedTokenUsage.inputTokens,
+        outputTokens:
+          event.usage.outputTokens - entry.lastReportedTokenUsage.outputTokens,
+        totalTokens:
+          event.usage.totalTokens - entry.lastReportedTokenUsage.totalTokens,
       };
       entry.tokenUsage.inputTokens += Math.max(0, delta.inputTokens);
       entry.tokenUsage.outputTokens += Math.max(0, delta.outputTokens);
@@ -718,18 +820,6 @@ export class Orchestrator {
     }
   }
 
-  // T34: Startup cleanup
-
-  private updateProgress(issueId: string, turn: number, maxTurns: number, entry: RunningEntry | undefined): void {
-    let summary = entry?.lastAgentMessage ?? "";
-    // Prefer assistant text; fallback to tool names if no message
-    if (!summary) {
-      summary = `Tool calls in progress`;
-    }
-    const progress = `Turn ${turn}/${maxTurns}: ${summary.length > 200 ? summary.slice(0, 200) + "..." : summary}`;
-    this.deps.tracker.updateIssueProgress?.(issueId, progress).catch(() => {});
-  }
-
   // T34b: Startup cleanup (original)
   private async startupCleanup(): Promise<void> {
     try {
@@ -738,7 +828,10 @@ export class Orchestrator {
       );
       const identifiers = terminalIssues.map((i) => i.identifier);
       await this.deps.workspaceManager.cleanupTerminalWorkspaces(identifiers);
-      logger.info({ count: identifiers.length }, "Startup terminal workspace cleanup done");
+      logger.info(
+        { count: identifiers.length },
+        "Startup terminal workspace cleanup done",
+      );
     } catch (err) {
       logger.warn({ error: String(err) }, "Startup cleanup failed, continuing");
     }

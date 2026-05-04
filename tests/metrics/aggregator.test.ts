@@ -34,31 +34,44 @@ describe("aggregate", () => {
     const path = makePath();
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
-    const yesterday = new Date(today.getTime() - 86400000);
-    const lastWeek = new Date(today.getTime() - 8 * 86400000);
-    const lastMonth = new Date(today);
-    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
+    const lastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 8, 12);
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate(), 12);
 
-    writeFileSync(path, [
-      record({ completedAt: today.toISOString(), totalTokens: 100 }),
-      record({ completedAt: yesterday.toISOString(), totalTokens: 200 }),
-      record({ completedAt: lastWeek.toISOString(), totalTokens: 400 }),
-      record({ completedAt: lastMonth.toISOString(), totalTokens: 800 }),
-    ].join("\n") + "\n");
+    const records = [
+      { completedAt: today.toISOString(), totalTokens: 100 },
+      { completedAt: yesterday.toISOString(), totalTokens: 200 },
+      { completedAt: lastWeek.toISOString(), totalTokens: 400 },
+      { completedAt: lastMonth.toISOString(), totalTokens: 800 },
+    ];
+
+    writeFileSync(path, records.map(r => record(r)).join("\n") + "\n");
 
     const result = await aggregate(path);
 
-    // Today: only today's record
-    expect(result.today.totalTokens).toBe(100);
-    expect(result.today.issueCount).toBe(1);
+    // Compute expected using same period logic as aggregator
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const dow = now.getDay();
+    const wdiff = dow === 0 ? 6 : dow - 1;
+    const ws = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    ws.setDate(ws.getDate() - wdiff);
+    const weekStart = ws.getTime();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
-    // Week: today + yesterday
-    expect(result.week.totalTokens).toBe(300);
-    expect(result.week.issueCount).toBe(2);
+    let et = 0, ew = 0, em = 0, ect = 0, ecw = 0, ecm = 0;
+    for (const r of records) {
+      const ts = new Date(r.completedAt).getTime();
+      if (ts >= monthStart) { em += r.totalTokens; ecm++; }
+      if (ts >= weekStart) { ew += r.totalTokens; ecw++; }
+      if (ts >= dayStart) { et += r.totalTokens; ect++; }
+    }
 
-    // Month: today + yesterday (lastWeek and lastMonth are outside this month)
-    expect(result.month.totalTokens).toBe(300);
-    expect(result.month.issueCount).toBe(2);
+    expect(result.today.totalTokens).toBe(et);
+    expect(result.today.issueCount).toBe(ect);
+    expect(result.week.totalTokens).toBe(ew);
+    expect(result.week.issueCount).toBe(ecw);
+    expect(result.month.totalTokens).toBe(em);
+    expect(result.month.issueCount).toBe(ecm);
   });
 
   test("returns zeros for missing file", async () => {

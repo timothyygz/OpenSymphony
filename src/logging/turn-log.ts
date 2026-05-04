@@ -24,7 +24,6 @@ export interface SessionMeta {
   title: string;
   workspacePath: string;
   sessionId: string | null;
-  joinCommand: string;
   startedAt: string;
   lastTurnAt?: string;
   totalTurns: number;

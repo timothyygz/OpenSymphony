@@ -16,6 +16,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.126",
     "liquidjs": "^10.25.7",
     "pino": "^10.3.1",
     "yaml": "^2.8.4",

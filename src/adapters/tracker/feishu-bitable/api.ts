@@ -102,6 +102,31 @@ export class FeishuBitableApi {
     return records;
   }
 
+  async createRecord(fields: Record<string, unknown>): Promise<BitableRecord> {
+    const token = await this.auth.getAccessToken();
+    const url = `${FEISHU_BASE}/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records`;
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ fields }),
+    });
+
+    if (!resp.ok) {
+      throw new Error(`Feishu API error: HTTP ${resp.status} ${await resp.text()}`);
+    }
+
+    const data = (await resp.json()) as { code: number; msg: string; data: { record: BitableRecord } };
+    if (data.code !== 0) {
+      throw new Error(`Feishu API error: code=${data.code} msg=${data.msg}`);
+    }
+
+    return data.data.record;
+  }
+
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<BitableRecord> {
     const token = await this.auth.getAccessToken();
     const url = `${FEISHU_BASE}/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`;

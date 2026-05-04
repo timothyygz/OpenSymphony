@@ -25,19 +25,21 @@ async function main() {
   const { createTracker } = await import("./adapters/tracker/registry.ts");
   const { createAgent } = await import("./adapters/agent/registry.ts");
   const { WorkspaceManager } = await import("./workspace/manager.ts");
-  const { logger } = await import("./logging/logger.ts");
-
-  // Register built-in adapters
-  await import("./adapters/tracker/feishu-bitable/register.ts");
-  await import("./adapters/agent/claude-code/register.ts");
+  const { logger, setLogFilePath } = await import("./logging/logger.ts");
 
   const resolvedPath = resolveWorkflowPath(workflowPath);
+  const workflowDir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+
+  setLogFilePath(`${workflowDir}/symphony.log`);
+
+  // Register built-in adapters (after log file is configured — these trigger logger.debug)
+  await import("./adapters/tracker/feishu-bitable/register.ts");
+  await import("./adapters/agent/claude-code/register.ts");
 
   logger.info({ path: resolvedPath }, "Starting Symphony service");
 
   // Initial load
   const workflow = loadWorkflow(resolvedPath);
-  const workflowDir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
   const config = buildServiceConfig(workflow.config, workflowDir);
 
   // Validate

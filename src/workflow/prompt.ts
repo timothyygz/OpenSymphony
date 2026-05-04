@@ -7,7 +7,11 @@ const engine = new Liquid({
   strictFilters: true,
 });
 
-export function renderTemplate(template: string, issue: Issue, attempt: number | null): string {
+export function renderTemplate(
+  template: string,
+  issue: Issue,
+  attempt: number | null,
+): string {
   try {
     engine.parse(template);
   } catch (err) {
@@ -37,7 +41,10 @@ export function renderTemplate(template: string, issue: Issue, attempt: number |
   }
 }
 
-export function buildContinuationGuidance(issue: Issue, attempt: number | null): string {
+export function buildContinuationGuidance(
+  issue: Issue,
+  attempt: number | null,
+): string {
   const parts = [
     `Continuing work on ${issue.identifier}: ${issue.title}.`,
     `Current state: ${issue.state}.`,
@@ -45,6 +52,8 @@ export function buildContinuationGuidance(issue: Issue, attempt: number | null):
   if (attempt) {
     parts.push(`This is retry attempt #${attempt}.`);
   }
-  parts.push("If the task is complete, update the tracker. Otherwise continue.");
+  parts.push(
+    "If the task is complete, use the 'track_tool' tool to write a result summary and update the state to mark it done. Otherwise continue.",
+  );
   return parts.join(" ");
 }

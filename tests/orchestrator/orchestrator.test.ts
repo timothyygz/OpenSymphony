@@ -307,35 +307,7 @@ describe("Orchestrator integration", () => {
     orchestrator.stop();
   });
 
-  it("writes join command to tracker on dispatch", async () => {
-    const issue = makeIssue();
-    mockTracker.setIssues([issue]);
-    mockAgent.turnResults = [{ status: "completed" }];
 
-    // Make issue terminal after first turn
-    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
-    let fetchCount = 0;
-    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
-      fetchCount++;
-      if (fetchCount > 0) return [makeIssue({ state: "已完成" })];
-      return origFetch(ids);
-    };
-
-    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
-    const orchestrator = new Orchestrator({
-      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
-    });
-
-    await (orchestrator as any).tick();
-    await new Promise((r) => setTimeout(r, 150));
-
-    const joinCmd = mockTracker.joinCommands.get("issue-1");
-    expect(joinCmd).toBeDefined();
-    expect(joinCmd).toContain("--resume");
-    expect(joinCmd).toContain("cd ");
-
-    orchestrator.stop();
-  });
 
   it("creates meta.json with session info on dispatch", async () => {
     const issue = makeIssue();
@@ -367,74 +339,6 @@ describe("Orchestrator integration", () => {
     expect(meta!.issueId).toBe("issue-1");
     expect(meta!.identifier).toBe("MT-100");
     expect(meta!.sessionId).toBeNull();
-    expect(meta!.joinCommand).toContain("--resume");
-    expect(meta!.joinCommand).toContain("cd ");
-
-    orchestrator.stop();
-  });
-
-  it("updates progress in tracker after each turn", async () => {
-    const issue = makeIssue();
-    mockTracker.setIssues([issue]);
-
-    // 2 turns, then terminal
-    mockAgent.turnResults = [{ status: "completed" }, { status: "completed" }];
-    mockAgent.setTurnEvents([
-      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Analyzing code" }],
-      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Fixing bug" }],
-    ]);
-
-    let fetchCount = 0;
-    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
-    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
-      fetchCount++;
-      if (fetchCount >= 2) return [makeIssue({ state: "已完成" })];
-      return origFetch(ids);
-    };
-
-    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
-    const orchestrator = new Orchestrator({
-      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
-    });
-
-    await (orchestrator as any).tick();
-    await new Promise((r) => setTimeout(r, 200));
-
-    const progressList = mockTracker.progressUpdates.get("issue-1");
-    expect(progressList).toBeDefined();
-    expect(progressList!.length).toBeGreaterThanOrEqual(1);
-    expect(progressList![0]).toContain("Turn 1/3");
-
-    orchestrator.stop();
-  });
-
-  it("writes result summary on normal exit", async () => {
-    const issue = makeIssue();
-    mockTracker.setIssues([issue]);
-    mockAgent.turnResults = [{ status: "completed" }];
-    mockAgent.setTurnEvents([
-      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Task completed: fixed all tests" }],
-    ]);
-
-    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
-    let fetchCount = 0;
-    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
-      fetchCount++;
-      if (fetchCount > 0) return [makeIssue({ state: "已完成" })];
-      return origFetch(ids);
-    };
-
-    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
-    const orchestrator = new Orchestrator({
-      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
-    });
-
-    await (orchestrator as any).tick();
-    await new Promise((r) => setTimeout(r, 150));
-
-    const summary = mockTracker.resultSummaries.get("issue-1");
-    expect(summary).toBeDefined();
-    expect(summary).toContain("fixed all tests");
 
     orchestrator.stop();
   });

@@ -1,18 +1,34 @@
 import pino from "pino";
+import { multistream } from "pino";
 
 let _logger: pino.Logger | null = null;
+let _logFilePath: string | null = null;
+
+export function setLogFilePath(path: string): void {
+  _logFilePath = path;
+}
 
 function getLogger(): pino.Logger {
   if (!_logger) {
-    const dest = process.env.SYMPHONY_LOG_DEST === "stderr"
+    const streams: pino.StreamEntry[] = [];
+
+    const consoleDest = process.env.SYMPHONY_LOG_DEST === "stderr"
       ? pino.destination(2)
-      : undefined;
+      : pino.destination(1);
+    if (!(_logFilePath && process.env.SYMPHONY_LOG_DEST === "stderr")) {
+      streams.push({ stream: consoleDest });
+    }
+
+    if (_logFilePath) {
+      streams.push({ stream: pino.destination({ dest: _logFilePath, sync: false }) });
+    }
+
     _logger = pino({
       level: process.env.LOG_LEVEL ?? "info",
       formatters: {
         level: (label) => ({ level: label }),
       },
-    }, dest);
+    }, multistream(streams));
   }
   return _logger;
 }

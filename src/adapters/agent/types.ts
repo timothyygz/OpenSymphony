@@ -1,3 +1,4 @@
+import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { Issue, TokenUsage } from "../../model/index.ts";
 
 export type { TokenUsage };
@@ -34,6 +35,7 @@ export interface AgentSessionContext {
   issue: Issue;
   sessionId: string;
   config: Record<string, unknown>;
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface TurnResult {
