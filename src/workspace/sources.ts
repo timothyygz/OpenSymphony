@@ -1,11 +1,12 @@
 import type { WorkspaceSource } from "../model/workflow.ts";
-import { expandPath } from "./safety.ts";
+import { expandPath, sanitizeKey } from "./safety.ts";
 import { logger } from "../logging/logger.ts";
 
 export async function initSources(
   sources: WorkspaceSource[],
   workspacePath: string,
   workflowDir: string,
+  identifier?: string,
 ): Promise<void> {
   const completed: { source: WorkspaceSource; subPath: string }[] = [];
 
@@ -17,7 +18,7 @@ export async function initSources(
           await cloneSource(source, workspacePath, subPath);
           break;
         case "git-worktree":
-          await addWorktree(source, workspacePath, subPath, workflowDir);
+          await addWorktree(source, workspacePath, subPath, workflowDir, identifier);
           break;
       }
       completed.push({ source, subPath });
@@ -83,17 +84,20 @@ async function addWorktree(
   workspacePath: string,
   subPath: string,
   workflowDir: string,
+  identifier?: string,
 ): Promise<void> {
   const repoPath = expandPath(source.repo, workflowDir);
   const args = ["-C", repoPath, "worktree", "add", `${workspacePath}/${subPath}`];
 
-  if (source.branch) {
-    args.push("-b", source.branch);
+  const branch = source.branch ?? (identifier ? sanitizeKey(identifier) : undefined);
+
+  if (branch) {
+    args.push("-b", branch);
   } else {
     args.push("--detach", "HEAD");
   }
 
-  logger.info({ repo: repoPath, path: subPath, branch: source.branch }, "Adding worktree");
+  logger.info({ repo: repoPath, path: subPath, branch }, "Adding worktree");
   await exec("git", args);
 }
 
