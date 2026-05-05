@@ -61,7 +61,7 @@ export class WorkspaceManager {
     } else {
       // Warn if sources config has changed since creation
       try {
-        const meta = readMetaJson(workspacePath);
+        const meta = await readMetaJson(workspacePath);
         if (meta?.sourcesHash) {
           const currentHash = hashSources(this.config.sources);
           if (currentHash !== meta.sourcesHash) {
@@ -87,7 +87,7 @@ export class WorkspaceManager {
 
     // Cleanup worktree sources using meta.json snapshot
     try {
-      const meta = readMetaJson(workspacePath);
+      const meta = await readMetaJson(workspacePath);
       if (meta?.sources && Array.isArray(meta.sources)) {
         await cleanupSources(meta.sources, workspacePath);
       }

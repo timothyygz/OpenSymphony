@@ -374,7 +374,7 @@ describe("Orchestrator integration", () => {
     const metaPath = resolve(tempRoot, "MT-100", ".symphony", "meta.json");
     expect(existsSync(metaPath)).toBe(true);
 
-    const meta = readMetaJson(resolve(tempRoot, "MT-100"));
+    const meta = await readMetaJson(resolve(tempRoot, "MT-100"));
     expect(meta).not.toBeNull();
     expect(meta!.issueId).toBe("issue-1");
     expect(meta!.identifier).toBe("MT-100");
