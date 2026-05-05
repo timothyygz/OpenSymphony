@@ -1,9 +1,11 @@
 import type { TrackerAdapter } from "../types.ts";
 import type { Issue, TokenUsage } from "../../../model/index.ts";
+import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { FeishuAuth } from "./auth.ts";
 import { FeishuBitableApi } from "./api.ts";
 import { mapRecordToIssue, type FieldMapping } from "./mapper.ts";
 import { logger } from "../../../logging/logger.ts";
+import { createTrackerMcpServer } from "../../agent/claude-code/tracker-tools.ts";
 
 export interface FeishuBitableConfig {
   appId: string;
@@ -124,6 +126,11 @@ export class FeishuBitableAdapter implements TrackerAdapter {
     if (!this.resultSummaryField) return;
     await this.api.updateRecord(issueId, { [this.resultSummaryField]: summary });
     logger.info({ issueId }, "Updated issue result summary in tracker");
+  }
+
+  getMcpServerConfig(issueId: string): Record<string, McpServerConfig> {
+    const trackerMcpServer = createTrackerMcpServer(this.api, issueId);
+    return { tracker: trackerMcpServer };
   }
 }
 

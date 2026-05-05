@@ -29,8 +29,6 @@ import { scheduleRetry, cancelRetry } from "./retry.ts";
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
 import { writeMetaJson, updateMetaJson } from "../workspace/meta.ts";
-import { createTrackerMcpServer } from "../adapters/agent/claude-code/tracker-tools.ts";
-import { FeishuBitableAdapter } from "../adapters/tracker/feishu-bitable/adapter.ts";
 
 export interface OrchestratorDeps {
   config: ServiceConfig;
@@ -286,19 +284,15 @@ export class Orchestrator {
       // before_run hook
       await runHookIfConfigured("before_run", hooks, workspace.path);
 
-      // Create tracker MCP server for agent (if tracker is FeishuBitable)
+      // Create tracker MCP server for agent (if adapter supports it)
       let mcpServers:
         | Record<
             string,
             import("@anthropic-ai/claude-agent-sdk").McpServerConfig
           >
         | undefined;
-      if (this.deps.tracker instanceof FeishuBitableAdapter) {
-        const trackerMcpServer = createTrackerMcpServer(
-          this.deps.tracker.api,
-          issue.id,
-        );
-        mcpServers = { tracker: trackerMcpServer };
+      if (this.deps.tracker.getMcpServerConfig) {
+        mcpServers = this.deps.tracker.getMcpServerConfig(issue.id);
       }
 
       // Start agent session
