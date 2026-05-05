@@ -1,8 +1,7 @@
 import type { AgentEvent } from "../adapters/agent/types.ts";
 import type { RunningEntry } from "../model/index.ts";
 import type { OrchestratorState } from "./state.ts";
-import { updateMetaJson } from "../logging/turn-log.ts";
-import type { TurnLog } from "../logging/turn-log.ts";
+import { updateMetaJson } from "../workspace/meta.ts";
 import type { TrackerAdapter } from "../adapters/tracker/types.ts";
 import { logger } from "../logging/logger.ts";
 
@@ -18,7 +17,6 @@ export class EventProcessor {
     issueId: string,
     event: AgentEvent,
     turn: number,
-    turnLog: TurnLog | null,
     toolCallsByTurn: Map<number, string[]> | null,
     workspacePath: string,
   ): void {
@@ -48,43 +46,12 @@ export class EventProcessor {
         });
     }
 
-    // Log agent events to turn log
-    if (turnLog) {
-      this.logToTurnLog(turnLog, toolCallsByTurn, turn, event);
-    }
-
     if (event.usage) {
       this.trackTokenDeltas(entry, event.usage);
     }
 
     if (event.rateLimits) {
       this.deps.state.rateLimits = event.rateLimits;
-    }
-  }
-
-  private logToTurnLog(
-    turnLog: TurnLog,
-    toolCallsByTurn: Map<number, string[]> | null,
-    turn: number,
-    event: AgentEvent,
-  ): void {
-    if (
-      event.message &&
-      (event.event === "assistant" || event.event === "message")
-    ) {
-      turnLog.logAssistantMessage(turn, event.message);
-    }
-    if (event.toolName) {
-      turnLog.logToolUse(turn, event.toolName, event.toolInput);
-      toolCallsByTurn?.get(turn)?.push(event.toolName) ??
-        toolCallsByTurn?.set(turn, [event.toolName]);
-    }
-    if (event.event === "tool_result" && event.rawEvent) {
-      const output =
-        typeof event.rawEvent.result === "string"
-          ? event.rawEvent.result
-          : (event.message ?? "");
-      turnLog.logToolResult(turn, event.toolName ?? "unknown", output);
     }
   }
 

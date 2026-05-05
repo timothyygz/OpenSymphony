@@ -5,16 +5,12 @@ import type { OrchestratorState } from "./state.ts";
 import { isActiveState, isTerminalState, addRuntimeSeconds, addTokenUsage } from "./state.ts";
 import { scheduleRetry } from "./retry.ts";
 import { logger } from "../logging/logger.ts";
-import type { ExecutionLog } from "../logging/execution-log.ts";
-import type { TokenLog } from "../metrics/token-log.ts";
 
 export interface ReconcilerDeps {
   state: OrchestratorState;
   config: ServiceConfig;
   tracker: TrackerAdapter;
   workspaceManager: WorkspaceManager;
-  executionLog?: ExecutionLog;
-  tokenLog?: TokenLog;
 }
 
 export class Reconciler {
@@ -36,36 +32,22 @@ export class Reconciler {
           { issueId, elapsed, stallTimeoutMs },
           "Stall detected, terminating worker",
         );
-        this.deps.executionLog?.append({
-          event: "stall_detected",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          elapsed,
-          timeout: stallTimeoutMs,
-        });
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          reason: "stall",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
+        logger.info(
+          { event: "stall_detected", issueId, identifier: entry.identifier, elapsed, timeout: stallTimeoutMs },
+          "Stall detected",
+        );
+        logger.info(
+          { event: "worker_exit", issueId, identifier: entry.identifier, reason: "stall", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
+          "Worker exiting due to stall",
+        );
         this.deps.state.running.delete(issueId);
         addRuntimeSeconds(this.deps.state, entry);
         this.finalizeWorkerTokens(entry);
         this.deps.state.claimed.delete(issueId);
-        this.deps.executionLog?.append({
-          event: "retry_scheduled",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          attempt: entry.retryAttempt + 1,
-          backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-          reason: "stall detected",
-        });
+        logger.info(
+          { event: "retry_scheduled", issueId, identifier: entry.identifier, attempt: entry.retryAttempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: "stall detected" },
+          "Retry scheduled after stall",
+        );
         scheduleRetry(
           this.deps.state,
           issueId,
@@ -106,15 +88,10 @@ export class Reconciler {
           { issueId: issue.id, state: issue.state },
           "Issue is terminal, terminating worker",
         );
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: entry.identifier,
-          reason: "normal",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
+        logger.info(
+          { event: "worker_exit", issueId: issue.id, identifier: entry.identifier, reason: "normal", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
+          "Worker exiting normally",
+        );
         this.deps.state.running.delete(issue.id);
         addRuntimeSeconds(this.deps.state, entry);
         this.finalizeWorkerTokens(entry);
@@ -131,15 +108,10 @@ export class Reconciler {
           { issueId: issue.id, state: issue.state },
           "Issue is non-active, stopping worker",
         );
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: entry.identifier,
-          reason: "external_cancel",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
+        logger.info(
+          { event: "worker_exit", issueId: issue.id, identifier: entry.identifier, reason: "external_cancel", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
+          "Worker exiting due to external cancel",
+        );
         this.deps.state.running.delete(issue.id);
         addRuntimeSeconds(this.deps.state, entry);
         this.finalizeWorkerTokens(entry);
@@ -167,25 +139,18 @@ export class Reconciler {
   finalizeWorkerTokens(entry: RunningEntry): void {
     addTokenUsage(this.deps.state, entry);
 
-    if (this.deps.tokenLog) {
-      try {
-        this.deps.tokenLog.append({
-          identifier: entry.identifier,
-          issueId: entry.issue.id,
-          inputTokens: entry.tokenUsage.inputTokens,
-          outputTokens: entry.tokenUsage.outputTokens,
-          totalTokens: entry.tokenUsage.totalTokens,
-          turns: entry.turnCount,
-          retryAttempt: entry.retryAttempt,
-          completedAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        logger.warn(
-          { identifier: entry.identifier, error: String(err) },
-          "Token log write failed",
-        );
-      }
-    }
+    logger.info(
+      {
+        identifier: entry.identifier,
+        issueId: entry.issue.id,
+        inputTokens: entry.tokenUsage.inputTokens,
+        outputTokens: entry.tokenUsage.outputTokens,
+        totalTokens: entry.tokenUsage.totalTokens,
+        turns: entry.turnCount,
+        retryAttempt: entry.retryAttempt,
+      },
+      "Worker token usage finalized",
+    );
 
     this.deps.tracker
       .updateIssueTokens(entry.issue.id, entry.tokenUsage)

@@ -22,8 +22,7 @@ import { cancelRetry } from "./retry.ts";
 import { createTrackerMcpServer } from "../adapters/agent/claude-code/tracker-tools.ts";
 import { FeishuBitableAdapter } from "../adapters/tracker/feishu-bitable/adapter.ts";
 import { logger } from "../logging/logger.ts";
-import type { ExecutionLog } from "../logging/execution-log.ts";
-import { TurnLog, writeMetaJson, updateMetaJson } from "../logging/turn-log.ts";
+import { writeMetaJson, updateMetaJson } from "../workspace/meta.ts";
 import type { EventProcessor } from "./event-processor.ts";
 
 export type WorkerExitCallback = (
@@ -39,7 +38,6 @@ export interface WorkerRunnerDeps {
   tracker: TrackerAdapter;
   agent: AgentAdapter;
   workspaceManager: WorkspaceManager;
-  executionLog?: ExecutionLog;
   eventProcessor: EventProcessor;
 }
 
@@ -94,27 +92,20 @@ export class WorkerRunner {
           "Failed to mark issue as in-progress",
         );
       });
-    this.deps.executionLog?.append({
-      event: "tracker_state_updated",
-      timestamp: new Date().toISOString(),
-      issueId: issue.id,
-      identifier: issue.identifier,
-      fromState,
-      toState: this.deps.config.agent.in_progress_state,
-    });
+    logger.info(
+      { event: "tracker_state_updated", issueId: issue.id, identifier: issue.identifier, fromState, toState: this.deps.config.agent.in_progress_state },
+      "Tracker state updated",
+    );
 
     logger.info(
       { issueId: issue.id, identifier: issue.identifier, attempt },
       "Dispatching issue",
     );
 
-    this.deps.executionLog?.append({
-      event: "dispatch",
-      timestamp: new Date().toISOString(),
-      issueId: issue.id,
-      identifier: issue.identifier,
-      attempt: attempt ?? 0,
-    });
+    logger.info(
+      { event: "dispatch", issueId: issue.id, identifier: issue.identifier, attempt: attempt ?? 0 },
+      "Dispatching issue to worker",
+    );
 
     // Run worker in background
     this.runWorker(issue, attempt, sessionId, onWorkerExit).catch((err) => {
@@ -122,28 +113,20 @@ export class WorkerRunner {
         { issueId: issue.id, error: String(err) },
         "Worker spawn failed",
       );
-      this.deps.executionLog?.append({
-        event: "worker_spawn_failed",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        error: String(err),
-      });
+      logger.info(
+        { event: "worker_spawn_failed", issueId: issue.id, identifier: issue.identifier, error: String(err) },
+        "Worker spawn failed",
+      );
       this.deps.state.running.delete(issue.id);
       this.deps.state.claimed.delete(issue.id);
       // Reset state so retry can re-dispatch
       this.deps.tracker
         .updateIssueState(issue.id, this.deps.config.agent.active_reset_state)
         .catch(() => {});
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        attempt: (attempt ?? 0) + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: String(err),
-      });
+      logger.info(
+        { event: "retry_scheduled", issueId: issue.id, identifier: issue.identifier, attempt: (attempt ?? 0) + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: String(err) },
+        "Retry scheduled after spawn failure",
+      );
     });
   }
 
@@ -191,10 +174,8 @@ export class WorkerRunner {
       // Update running entry with session info
       const entry = this.deps.state.running.get(issue.id);
 
-      // Initialize turn log and meta.json
-      let turnLog: TurnLog | null = null;
+      // Initialize meta.json
       try {
-        turnLog = new TurnLog(workspace.path);
         const sources = config.workspace.sources ?? [];
         writeMetaJson(workspace.path, {
           issueId: issue.id,
@@ -211,17 +192,14 @@ export class WorkerRunner {
       } catch (err) {
         logger.warn(
           { issueId: issue.id, error: String(err) },
-          "Failed to initialize turn log",
+          "Failed to initialize meta.json",
         );
       }
 
-      this.deps.executionLog?.append({
-        event: "session_started",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        sessionId,
-      });
+      logger.info(
+        { event: "session_started", issueId: issue.id, identifier: issue.identifier, sessionId },
+        "Agent session started",
+      );
 
       // Turn loop
       const maxTurns = config.agent.max_turns;
@@ -244,18 +222,13 @@ export class WorkerRunner {
               trackerGuidance
             : buildContinuationGuidance(issue, attempt) + trackerGuidance;
 
-        // Log user prompt
-        turnLog?.logUserPrompt(turnNumber, prompt);
-
         // Run one turn
-        const turnLogRef = turnLog;
         const toolCallsRef = toolCallsByTurn;
         const turnResult = await agent.runTurn(session, prompt, (event) => {
           this.deps.eventProcessor.onAgentEvent(
             issue.id,
             event,
             turnNumber,
-            turnLogRef,
             toolCallsRef,
             workspace.path,
           );
@@ -263,14 +236,10 @@ export class WorkerRunner {
 
         if (turnResult.status !== "completed") {
           // Turn failed
-          this.deps.executionLog?.append({
-            event: "turn_failed",
-            timestamp: new Date().toISOString(),
-            issueId: issue.id,
-            identifier: issue.identifier,
-            turn: turnNumber,
-            error: turnResult.error ?? "unknown",
-          });
+          logger.info(
+            { event: "turn_failed", issueId: issue.id, identifier: issue.identifier, turn: turnNumber, error: turnResult.error ?? "unknown" },
+            "Turn failed",
+          );
           await runHookBestEffort("after_run", hooks, workspace.path);
           await agent.stopSession(session);
           await onWorkerExit(issue.id, "failed", turnResult.error);
@@ -281,15 +250,10 @@ export class WorkerRunner {
         const e = this.deps.state.running.get(issue.id);
         if (e) e.turnCount = turnNumber;
 
-        this.deps.executionLog?.append({
-          event: "turn_completed",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: issue.identifier,
-          turn: turnNumber,
-          inputTokens: e?.tokenUsage.inputTokens ?? 0,
-          outputTokens: e?.tokenUsage.outputTokens ?? 0,
-        });
+        logger.info(
+          { event: "turn_completed", issueId: issue.id, identifier: issue.identifier, turn: turnNumber, inputTokens: e?.tokenUsage.inputTokens ?? 0, outputTokens: e?.tokenUsage.outputTokens ?? 0 },
+          "Turn completed",
+        );
 
         // Update meta.json with turn progress
         if (e) {

@@ -1,0 +1,19 @@
+{
+  "issueId": "recviFVhmrFms6",
+  "identifier": "SYMP-052",
+  "title": "[巡检-H01] Orchestrator God class 需拆分",
+  "workspacePath": "/Users/timothy/.open-symphony/workspaces/SYMP-052",
+  "sessionId": "c60ba580-f7be-420b-86ca-fafed0266f04",
+  "startedAt": "2026-05-04T17:53:03.469Z",
+  "totalTurns": 1,
+  "totalTokens": 93933,
+  "sources": [
+    {
+      "type": "git-worktree",
+      "repo": "~/Workspace/symphony-demo",
+      "path": "/"
+    }
+  ],
+  "sourcesHash": "1eedb6970a518d00",
+  "lastTurnAt": "2026-05-04T18:03:35.295Z"
+}

@@ -13,8 +13,6 @@ import { sortForDispatch, canDispatch, availableSlots } from "./dispatch.ts";
 import { scheduleRetry } from "./retry.ts";
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
-import type { ExecutionLog } from "../logging/execution-log.ts";
-import type { TokenLog } from "../metrics/token-log.ts";
 import { EventProcessor } from "./event-processor.ts";
 import { Reconciler } from "./reconciler.ts";
 import { WorkerRunner } from "./worker-runner.ts";
@@ -52,8 +50,6 @@ export class Orchestrator {
         config: deps.config,
         tracker: deps.tracker,
         workspaceManager: deps.workspaceManager,
-        executionLog: deps.executionLog,
-        tokenLog: deps.tokenLog,
       },
       (issueId) => this.onRetryTimer(issueId),
     );
@@ -65,7 +61,6 @@ export class Orchestrator {
       tracker: deps.tracker,
       agent: deps.agent,
       workspaceManager: deps.workspaceManager,
-      executionLog: deps.executionLog,
       eventProcessor: this.eventProcessor,
     });
   }
