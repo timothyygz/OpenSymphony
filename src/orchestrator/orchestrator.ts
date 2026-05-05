@@ -42,6 +42,10 @@ export class Orchestrator {
   private state: OrchestratorState;
   private tickTimer: ReturnType<typeof setTimeout> | null = null;
   private running = true;
+  /** Active worker promises, keyed by issueId */
+  private activeWorkers = new Map<string, Promise<void>>();
+  /** Graceful shutdown timeout (ms) */
+  private static readonly SHUTDOWN_TIMEOUT_MS = 30_000;
 
   constructor(private readonly deps: OrchestratorDeps) {
     this.state = createInitialState();
@@ -61,12 +65,47 @@ export class Orchestrator {
     this.scheduleTick();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    logger.info("Orchestrator stopping...");
+
+    // 1. Stop accepting new work
     this.running = false;
+
+    // 2. Cancel tick timer
     if (this.tickTimer) {
       clearTimeout(this.tickTimer);
       this.tickTimer = null;
     }
+
+    // 3. Cancel all retry timers
+    for (const [issueId, retry] of this.state.retryAttempts) {
+      if (retry.timerHandle) {
+        clearTimeout(retry.timerHandle);
+      }
+      this.state.retryAttempts.delete(issueId);
+    }
+
+    // 4. Wait for active workers with a timeout
+    const workers = [...this.activeWorkers.values()];
+    if (workers.length > 0) {
+      logger.info(
+        { activeWorkers: workers.length },
+        "Waiting for active workers to finish",
+      );
+
+      const timeout = new Promise<void>((resolve) =>
+        setTimeout(() => {
+          logger.warn(
+            { activeWorkers: this.activeWorkers.size },
+            "Shutdown timeout reached, forcing exit",
+          );
+          resolve();
+        }, Orchestrator.SHUTDOWN_TIMEOUT_MS),
+      );
+
+      await Promise.race([Promise.allSettled(workers), timeout]);
+    }
+
     logger.info("Orchestrator stopped");
   }
 
@@ -252,19 +291,25 @@ export class Orchestrator {
       "Dispatching issue",
     );
 
-    // Run worker in background
-    this.runWorker(issue, attempt, sessionId).catch((err) => {
-      logger.error(
-        { issueId: issue.id, identifier: issue.identifier, error: String(err), event: "worker_spawn_failed" },
-        "Worker spawn failed",
-      );
-      this.state.running.delete(issue.id);
-      // Reset state so retry can re-dispatch
-      this.deps.tracker
-        .updateIssueState(issue.id, this.deps.config.agent.active_reset_state)
-        .catch(() => {});
-      this.retryOrFail(issue.id, issue.identifier, (attempt ?? 0) + 1, String(err));
-    });
+    // Run worker in background, tracking the promise for graceful shutdown
+    const workerPromise = this.runWorker(issue, attempt, sessionId)
+      .catch((err) => {
+        logger.error(
+          { issueId: issue.id, identifier: issue.identifier, error: String(err), event: "worker_spawn_failed" },
+          "Worker spawn failed",
+        );
+        this.state.running.delete(issue.id);
+        // Reset state so retry can re-dispatch
+        this.deps.tracker
+          .updateIssueState(issue.id, this.deps.config.agent.active_reset_state)
+          .catch(() => {});
+        this.retryOrFail(issue.id, issue.identifier, (attempt ?? 0) + 1, String(err));
+      })
+      .finally(() => {
+        this.activeWorkers.delete(issue.id);
+      });
+
+    this.activeWorkers.set(issue.id, workerPromise);
   }
 
   // T28: Worker attempt flow

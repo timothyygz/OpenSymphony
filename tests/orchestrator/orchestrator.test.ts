@@ -344,7 +344,7 @@ describe("Orchestrator integration", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(mockAgent.callCount).toBeGreaterThanOrEqual(1);
-    orchestrator.stop();
+    await orchestrator.stop();
   });
 
 
@@ -380,7 +380,7 @@ describe("Orchestrator integration", () => {
     expect(meta!.identifier).toBe("MT-100");
     expect(meta!.sessionId).toBeNull();
 
-    orchestrator.stop();
+    await orchestrator.stop();
   });
 
   it("creates workspace meta.json and processes agent events", async () => {
@@ -414,7 +414,7 @@ describe("Orchestrator integration", () => {
     expect(meta!.identifier).toBe("MT-100");
     expect(meta!.totalTurns).toBe(1);
 
-    orchestrator.stop();
+    await orchestrator.stop();
   });
 
   it("does not write result summary on failure", async () => {
@@ -437,7 +437,48 @@ describe("Orchestrator integration", () => {
 
     expect(mockTracker.resultSummaries.has("issue-1")).toBe(false);
 
-    orchestrator.stop();
+    await orchestrator.stop();
+  });
+
+  it("awaits active workers during graceful stop", async () => {
+    // Simulate a slow worker by using a deferred turn result
+    let resolveTurn: (result: TurnResult) => void;
+    const turnPromise = new Promise<TurnResult>((resolve) => {
+      resolveTurn = resolve;
+    });
+    mockAgent.runTurn = async () => turnPromise;
+
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    // Trigger dispatch
+    await (orchestrator as any).tick();
+
+    // Worker should be active
+    expect((orchestrator as any).activeWorkers.size).toBe(1);
+
+    // Start stop and verify it doesn't resolve immediately
+    const stopPromise = orchestrator.stop();
+    let stopResolved = false;
+    stopPromise.then(() => { stopResolved = true; });
+
+    // Give event loop a tick
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stopResolved).toBe(false); // stop should still be waiting
+
+    // Complete the worker turn
+    resolveTurn!({ status: "completed" });
+    mockTracker.fetchIssueStatesByIds = async () => [makeIssue({ state: "已完成" })];
+
+    // Now stop should resolve
+    await stopPromise;
+    expect(stopResolved).toBe(true);
+    expect((orchestrator as any).activeWorkers.size).toBe(0);
   });
 
   it("marks issue as permanently failed when max_retry_attempts exceeded", async () => {
