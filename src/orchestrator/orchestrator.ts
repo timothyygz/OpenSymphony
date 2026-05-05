@@ -25,8 +25,6 @@ export interface OrchestratorDeps {
   tracker: TrackerAdapter;
   agent: import("../adapters/agent/types.ts").AgentAdapter;
   workspaceManager: WorkspaceManager;
-  tokenLog?: TokenLog;
-  executionLog?: ExecutionLog;
 }
 
 export class Orchestrator {
@@ -189,15 +187,10 @@ export class Orchestrator {
     const entry = this.state.running.get(issueId);
     if (!entry) return;
 
-    this.deps.executionLog?.append({
-      event: "worker_exit",
-      timestamp: new Date().toISOString(),
-      issueId,
-      identifier: entry.identifier,
-      reason,
-      turns: entry.turnCount,
-      totalTokens: entry.tokenUsage.totalTokens,
-    });
+    logger.info(
+      { event: "worker_exit", issueId, identifier: entry.identifier, reason, turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
+      "Worker exit",
+    );
 
     this.state.running.delete(issueId);
     this.state.claimed.delete(issueId);
@@ -217,29 +210,20 @@ export class Orchestrator {
           this.deps.config.agent.active_reset_state,
         );
         logger.info({ issueId }, "Issue reset to active state for retry");
-        this.deps.executionLog?.append({
-          event: "tracker_state_updated",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          fromState: entry.issue.state,
-          toState: this.deps.config.agent.active_reset_state,
-        });
+        logger.info(
+          { event: "tracker_state_updated", issueId, identifier: entry.identifier, fromState: entry.issue.state, toState: this.deps.config.agent.active_reset_state },
+          "Tracker state updated",
+        );
       } catch (err) {
         logger.warn(
           { issueId, error: String(err) },
           "Failed to reset issue state for retry",
         );
       }
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: entry.identifier,
-        attempt: entry.retryAttempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: error ?? "worker failed",
-      });
+      logger.info(
+        { event: "retry_scheduled", issueId, identifier: entry.identifier, attempt: entry.retryAttempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: error ?? "worker failed" },
+        "Retry scheduled after worker failure",
+      );
       scheduleRetry(
         this.state,
         issueId,
@@ -264,15 +248,10 @@ export class Orchestrator {
     try {
       candidates = await this.deps.tracker.fetchCandidateIssues();
     } catch {
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: retry.identifier,
-        attempt: retry.attempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: "retry poll failed",
-      });
+      logger.info(
+        { event: "retry_scheduled", issueId, identifier: retry.identifier, attempt: retry.attempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: "retry poll failed" },
+        "Retry scheduled after poll failure",
+      );
       scheduleRetry(
         this.state,
         issueId,
@@ -294,15 +273,10 @@ export class Orchestrator {
     }
 
     if (availableSlots(this.state, this.state.maxConcurrentAgents) <= 0) {
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: retry.identifier,
-        attempt: retry.attempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: "no available orchestrator slots",
-      });
+      logger.info(
+        { event: "retry_scheduled", issueId, identifier: retry.identifier, attempt: retry.attempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: "no available orchestrator slots" },
+        "Retry scheduled due to no available slots",
+      );
       scheduleRetry(
         this.state,
         issueId,

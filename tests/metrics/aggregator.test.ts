@@ -18,6 +18,7 @@ describe("aggregate", () => {
 
   function record(overrides: Partial<{ identifier: string; issueId: string; inputTokens: number; outputTokens: number; totalTokens: number; turns: number; retryAttempt: number; completedAt: string }> = {}) {
     return JSON.stringify({
+      event: "token_usage",
       identifier: "T-001",
       issueId: "r1",
       inputTokens: 100,
