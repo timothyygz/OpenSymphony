@@ -1,6 +1,6 @@
 {
   "name": "@timothyygz/open-symphony",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Coding agent orchestration service based on OpenAI Symphony SPEC",
   "module": "src/cli.ts",
   "type": "module",

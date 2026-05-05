@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0 (2025-05-05)
+
+- Configure npm trusted publishing (OIDC) for CI
+- Skip integration tests in CI when env vars are missing
+
 ## v0.1.0 (2025-05-05)
 
 Initial release.
