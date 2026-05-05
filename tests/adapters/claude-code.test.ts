@@ -58,7 +58,7 @@ describe("ClaudeCodeAdapter (unit)", () => {
   });
 });
 
-describe("ClaudeCodeAdapter (integration)", () => {
+describe.skipIf(!process.env.SYMPHONY_INTEGRATION)("ClaudeCodeAdapter (integration)", () => {
   test(
     "runTurn completes a single-turn query",
     async () => {
@@ -172,7 +172,9 @@ describe("ClaudeCodeAdapter (integration)", () => {
   );
 });
 
-describe("ClaudeCodeAdapter with tracker tools (integration)", () => {
+const hasFeishu = !!(process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.FEISHU_APP_TOKEN && process.env.FEISHU_TABLE_ID);
+
+describe.skipIf(!process.env.SYMPHONY_INTEGRATION || !hasFeishu)("ClaudeCodeAdapter with tracker tools (integration)", () => {
   const { FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_APP_TOKEN, FEISHU_TABLE_ID } = process.env;
   const auth = new FeishuAuth(FEISHU_APP_ID!, FEISHU_APP_SECRET!);
   const api = new FeishuBitableApi(auth, FEISHU_APP_TOKEN!, FEISHU_TABLE_ID!);

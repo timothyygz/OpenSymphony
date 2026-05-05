@@ -1,4 +1,4 @@
-import { test, expect, afterAll } from "bun:test";
+import { describe, test, expect, afterAll } from "bun:test";
 import { createBitableTool } from "../../src/adapters/agent/claude-code/tracker-tools.ts";
 import { FeishuBitableApi } from "../../src/adapters/tracker/feishu-bitable/api.ts";
 import { FeishuAuth } from "../../src/adapters/tracker/feishu-bitable/auth.ts";
@@ -6,8 +6,12 @@ import type { BitableRecord } from "../../src/adapters/tracker/feishu-bitable/ap
 
 const { FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_APP_TOKEN, FEISHU_TABLE_ID } = process.env;
 
+const hasFeishu = !!(FEISHU_APP_ID && FEISHU_APP_SECRET && FEISHU_APP_TOKEN && FEISHU_TABLE_ID);
+
 const auth = new FeishuAuth(FEISHU_APP_ID!, FEISHU_APP_SECRET!);
 const api = new FeishuBitableApi(auth, FEISHU_APP_TOKEN!, FEISHU_TABLE_ID!);
+
+describe.skipIf(!hasFeishu)("Bitable tracker tools (integration)", () => {
 
 let testRecord: BitableRecord | undefined;
 let originalProgress: unknown;
@@ -154,4 +158,5 @@ test("create action returns error when no fields", async () => {
   expect(result.isError).toBe(true);
   const text = (result.content as any[])[0].text;
   expect(text).toContain("No fields");
+});
 });
