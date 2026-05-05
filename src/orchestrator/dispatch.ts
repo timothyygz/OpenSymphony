@@ -42,9 +42,13 @@ export function canDispatch(
   const normalizedState = issue.state.trim();
   const stateLimit = maxConcurrentAgentsByState.get(normalizedState);
   if (stateLimit !== undefined) {
-    const runningInState = [...state.running.values()]
-      .filter((r) => r.issue.state.trim() === normalizedState).length;
-    if (runningInState >= stateLimit) return false;
+    let runningInState = 0;
+    for (const r of state.running.values()) {
+      if (r.issue.state.trim() === normalizedState) {
+        runningInState++;
+        if (runningInState >= stateLimit) return false;
+      }
+    }
   }
 
   return true;

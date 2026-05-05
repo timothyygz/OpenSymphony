@@ -219,6 +219,46 @@ describe("canDispatch", () => {
     const state = createInitialState();
     expect(canDispatch(makeIssue({ state: "已完成" }), state, 10, new Map(), ["待处理"])).toBe(false);
   });
+
+  it("rejects when per-state concurrency limit reached", () => {
+    const state = createInitialState();
+    const perStateMap = new Map([["待处理", 1]]);
+    state.running.set("other", {
+      issue: makeIssue({ id: "other", state: "待处理" }),
+      identifier: "other",
+      sessionId: null,
+      agentPid: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: null,
+      lastAgentMessage: null,
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      retryAttempt: 0,
+      startedAt: new Date(),
+      turnCount: 0,
+    });
+    expect(canDispatch(makeIssue(), state, 10, perStateMap, ["待处理"])).toBe(false);
+  });
+
+  it("allows dispatch when per-state limit not reached", () => {
+    const state = createInitialState();
+    const perStateMap = new Map([["待处理", 2]]);
+    state.running.set("other", {
+      issue: makeIssue({ id: "other", state: "待处理" }),
+      identifier: "other",
+      sessionId: null,
+      agentPid: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: null,
+      lastAgentMessage: null,
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      retryAttempt: 0,
+      startedAt: new Date(),
+      turnCount: 0,
+    });
+    expect(canDispatch(makeIssue(), state, 10, perStateMap, ["待处理"])).toBe(true);
+  });
 });
 
 describe("Retry queue", () => {
@@ -396,6 +436,154 @@ describe("Orchestrator integration", () => {
     await new Promise((r) => setTimeout(r, 150));
 
     expect(mockTracker.resultSummaries.has("issue-1")).toBe(false);
+
+    orchestrator.stop();
+  });
+
+  it("reconciles stalled workers", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([]);
+
+    // Set very short stall timeout so the running entry is immediately stale
+    const stallConfig = makeConfig(tempRoot);
+    stallConfig.agent.stall_timeout_ms = 1;
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config: stallConfig, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    // Manually inject a stale running entry
+    const state = orchestrator.getState();
+    const staleEntry = {
+      issue,
+      identifier: issue.identifier,
+      sessionId: null,
+      agentPid: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: new Date(Date.now() - 10000),
+      lastAgentMessage: null,
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      retryAttempt: 0,
+      startedAt: new Date(Date.now() - 10000),
+      turnCount: 0,
+    };
+    state.running.set(issue.id, staleEntry);
+    state.claimed.add(issue.id);
+
+    await (orchestrator as any).tick();
+
+    // Stalled entry should be cleaned up and retry scheduled
+    expect(state.running.has(issue.id)).toBe(false);
+    expect(state.retryAttempts.has(issue.id)).toBe(true);
+
+    cancelRetry(state, issue.id);
+    orchestrator.stop();
+  });
+
+  it("reconciles terminal state from tracker", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([]);
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    // Inject a running entry
+    const state = orchestrator.getState();
+    const runningEntry = {
+      issue,
+      identifier: issue.identifier,
+      sessionId: null,
+      agentPid: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: null,
+      lastAgentMessage: null,
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      retryAttempt: 0,
+      startedAt: new Date(),
+      turnCount: 0,
+    };
+    state.running.set(issue.id, runningEntry);
+    state.claimed.add(issue.id);
+
+    // When reconciling, the tracker reports the issue is now terminal
+    mockTracker.fetchIssueStatesByIds = async () => [makeIssue({ state: "已完成" })];
+
+    await (orchestrator as any).tick();
+
+    // Running entry should be removed
+    expect(state.running.has(issue.id)).toBe(false);
+    expect(state.claimed.has(issue.id)).toBe(false);
+
+    orchestrator.stop();
+  });
+
+  it("respects per-state concurrency limits", async () => {
+    const state = createInitialState();
+    const perStateMap = new Map([["待处理", 1]]);
+
+    // One issue already running in "待处理" state
+    state.running.set("running-1", {
+      issue: makeIssue({ id: "running-1", state: "待处理" }),
+      identifier: "running-1",
+      sessionId: null,
+      agentPid: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: null,
+      lastAgentMessage: null,
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      retryAttempt: 0,
+      startedAt: new Date(),
+      turnCount: 0,
+    });
+
+    // Another "待处理" issue should be rejected due to per-state limit
+    const candidate = makeIssue({ id: "candidate-1", state: "待处理" });
+    expect(canDispatch(candidate, state, 10, perStateMap, ["待处理"])).toBe(false);
+
+    // A different state should still be allowed
+    const otherStateCandidate = makeIssue({ id: "candidate-2", state: "进行中" });
+    expect(canDispatch(otherStateCandidate, state, 10, perStateMap, ["待处理", "进行中"])).toBe(true);
+  });
+
+  it("re-dispatches on retry timer callback", async () => {
+    const issue = makeIssue();
+    mockTracker.setIssues([issue]);
+    mockAgent.turnResults = [{ status: "completed" }];
+
+    // After first turn, issue becomes terminal
+    mockTracker.fetchIssueStatesByIds = async () => [makeIssue({ state: "已完成" })];
+
+    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
+    const orchestrator = new Orchestrator({
+      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
+    });
+
+    // Set up a retry entry
+    const state = orchestrator.getState();
+    let retryFired = false;
+    scheduleRetry(state, issue.id, issue.identifier, 1, "test error", config.agent.max_retry_backoff_ms, (id) => {
+      retryFired = true;
+      // Manually invoke the onRetryTimer logic
+      (orchestrator as any).onRetryTimer(id);
+    });
+
+    const retryEntry = state.retryAttempts.get(issue.id);
+    expect(retryEntry).toBeDefined();
+
+    // Fire the retry callback
+    retryEntry!.timerHandle && clearTimeout(retryEntry!.timerHandle);
+    await (orchestrator as any).onRetryTimer(issue.id);
+
+    // Wait for worker to process
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(mockAgent.callCount).toBeGreaterThanOrEqual(1);
 
     orchestrator.stop();
   });

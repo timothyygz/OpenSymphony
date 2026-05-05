@@ -165,8 +165,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     onEvent: (event: AgentEvent) => void,
   ): Promise<TurnResult> {
     const sessionId =
-      (session.metadata.realSessionId as string) ??
-      (session.metadata.sessionId as string | undefined);
+      session.metadata.realSessionId ??
+      session.metadata.sessionId;
 
     const abortController = new AbortController();
     let timedOut = false;
@@ -180,7 +180,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }, this.timeoutMs);
 
     const options: Options = {
-      cwd: session.metadata.workspacePath as string,
+      cwd: session.metadata.workspacePath,
       abortController,
     };
 
@@ -197,9 +197,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       options.allowDangerouslySkipPermissions = true;
     }
 
-    const mcpServers = session.metadata.mcpServers as
-      | Record<string, import("@anthropic-ai/claude-agent-sdk").McpServerConfig>
-      | undefined;
+    const mcpServers = session.metadata.mcpServers;
     if (mcpServers) {
       options.mcpServers = mcpServers;
       const allowedTools = [
