@@ -28,9 +28,7 @@ import { sortForDispatch, canDispatch, availableSlots } from "./dispatch.ts";
 import { scheduleRetry, cancelRetry } from "./retry.ts";
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
-import type { ExecutionLog } from "../logging/execution-log.ts";
-import type { TokenLog } from "../metrics/token-log.ts";
-import { TurnLog, writeMetaJson, updateMetaJson } from "../logging/turn-log.ts";
+import { writeMetaJson, updateMetaJson } from "../workspace/meta.ts";
 import { createTrackerMcpServer } from "../adapters/agent/claude-code/tracker-tools.ts";
 import { FeishuBitableAdapter } from "../adapters/tracker/feishu-bitable/adapter.ts";
 
@@ -40,8 +38,6 @@ export interface OrchestratorDeps {
   tracker: TrackerAdapter;
   agent: AgentAdapter;
   workspaceManager: WorkspaceManager;
-  tokenLog?: TokenLog;
-  executionLog?: ExecutionLog;
 }
 
 export class Orchestrator {
@@ -198,56 +194,32 @@ export class Orchestrator {
           "Failed to mark issue as in-progress",
         );
       });
-    this.deps.executionLog?.append({
-      event: "tracker_state_updated",
-      timestamp: new Date().toISOString(),
-      issueId: issue.id,
-      identifier: issue.identifier,
-      fromState,
-      toState: this.deps.config.agent.in_progress_state,
-    });
-
     logger.info(
-      { issueId: issue.id, identifier: issue.identifier, attempt },
-      "Dispatching issue",
+      { event: "tracker_state_updated", issueId: issue.id, identifier: issue.identifier, fromState, toState: this.deps.config.agent.in_progress_state },
+      "Tracker state updated",
     );
 
-    this.deps.executionLog?.append({
-      event: "dispatch",
-      timestamp: new Date().toISOString(),
-      issueId: issue.id,
-      identifier: issue.identifier,
-      attempt: attempt ?? 0,
-    });
+    logger.info(
+      { issueId: issue.id, identifier: issue.identifier, attempt, event: "dispatch" },
+      "Dispatching issue",
+    );
 
     // Run worker in background
     this.runWorker(issue, attempt, sessionId).catch((err) => {
       logger.error(
-        { issueId: issue.id, error: String(err) },
+        { issueId: issue.id, identifier: issue.identifier, error: String(err), event: "worker_spawn_failed" },
         "Worker spawn failed",
       );
-      this.deps.executionLog?.append({
-        event: "worker_spawn_failed",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        error: String(err),
-      });
       this.state.running.delete(issue.id);
       this.state.claimed.delete(issue.id);
       // Reset state so retry can re-dispatch
       this.deps.tracker
         .updateIssueState(issue.id, this.deps.config.agent.active_reset_state)
         .catch(() => {});
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        attempt: (attempt ?? 0) + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: String(err),
-      });
+      logger.info(
+        { issueId: issue.id, identifier: issue.identifier, event: "retry_scheduled", attempt: (attempt ?? 0) + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: String(err) },
+        "Retry scheduled after worker spawn failure",
+      );
       scheduleRetry(
         this.state,
         issue.id,
@@ -304,10 +276,8 @@ export class Orchestrator {
       // Update running entry with session info
       const entry = this.state.running.get(issue.id);
 
-      // Initialize turn log and meta.json
-      let turnLog: TurnLog | null = null;
+      // Initialize meta.json
       try {
-        turnLog = new TurnLog(workspace.path);
         const sources = config.workspace.sources ?? [];
         writeMetaJson(workspace.path, {
           issueId: issue.id,
@@ -324,17 +294,14 @@ export class Orchestrator {
       } catch (err) {
         logger.warn(
           { issueId: issue.id, error: String(err) },
-          "Failed to initialize turn log",
+          "Failed to initialize meta.json",
         );
       }
 
-      this.deps.executionLog?.append({
-        event: "session_started",
-        timestamp: new Date().toISOString(),
-        issueId: issue.id,
-        identifier: issue.identifier,
-        sessionId,
-      });
+      logger.info(
+        { event: "session_started", issueId: issue.id, identifier: issue.identifier, sessionId },
+        "Session started",
+      );
 
       // Turn loop
       const maxTurns = config.agent.max_turns;
@@ -358,17 +325,18 @@ export class Orchestrator {
             : buildContinuationGuidance(issue, attempt) + trackerGuidance;
 
         // Log user prompt
-        turnLog?.logUserPrompt(turnNumber, prompt);
+        logger.info(
+          { event: "turn_user_prompt", issueId: issue.id, identifier: issue.identifier, turn: turnNumber },
+          "User prompt sent",
+        );
 
         // Run one turn
-        const turnLogRef = turnLog;
         const toolCallsRef = toolCallsByTurn;
         const turnResult = await agent.runTurn(session, prompt, (event) => {
           this.onAgentEvent(
             issue.id,
             event,
             turnNumber,
-            turnLogRef,
             toolCallsRef,
             workspace.path,
           );
@@ -376,14 +344,10 @@ export class Orchestrator {
 
         if (turnResult.status !== "completed") {
           // Turn failed
-          this.deps.executionLog?.append({
-            event: "turn_failed",
-            timestamp: new Date().toISOString(),
-            issueId: issue.id,
-            identifier: issue.identifier,
-            turn: turnNumber,
-            error: turnResult.error ?? "unknown",
-          });
+          logger.error(
+            { event: "turn_failed", issueId: issue.id, identifier: issue.identifier, turn: turnNumber, error: turnResult.error ?? "unknown" },
+            "Turn failed",
+          );
           await runHookBestEffort("after_run", hooks, workspace.path);
           await agent.stopSession(session);
           this.onWorkerExit(issue.id, "failed", turnResult.error);
@@ -394,15 +358,10 @@ export class Orchestrator {
         const e = this.state.running.get(issue.id);
         if (e) e.turnCount = turnNumber;
 
-        this.deps.executionLog?.append({
-          event: "turn_completed",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: issue.identifier,
-          turn: turnNumber,
-          inputTokens: e?.tokenUsage.inputTokens ?? 0,
-          outputTokens: e?.tokenUsage.outputTokens ?? 0,
-        });
+        logger.info(
+          { event: "turn_completed", issueId: issue.id, identifier: issue.identifier, turn: turnNumber, inputTokens: e?.tokenUsage.inputTokens ?? 0, outputTokens: e?.tokenUsage.outputTokens ?? 0 },
+          "Turn completed",
+        );
 
         // Update meta.json with turn progress
         if (e) {
@@ -463,26 +422,13 @@ export class Orchestrator {
       const elapsed = now - lastActivity.getTime();
       if (elapsed > stallTimeoutMs) {
         logger.warn(
-          { issueId, elapsed, stallTimeoutMs },
+          { event: "stall_detected", issueId, identifier: entry.identifier, elapsed, timeout: stallTimeoutMs },
           "Stall detected, terminating worker",
         );
-        this.deps.executionLog?.append({
-          event: "stall_detected",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          elapsed,
-          timeout: stallTimeoutMs,
-        });
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          reason: "stall",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
+        logger.info(
+          { event: "worker_exit", issueId, identifier: entry.identifier, reason: "stall", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
+          "Worker exit",
+        );
         // In Claude Code model, each turn is a separate process,
         // so stall detection is mainly a safety net.
         // The running entry will be cleaned up when the worker eventually exits.
@@ -490,15 +436,10 @@ export class Orchestrator {
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issueId);
-        this.deps.executionLog?.append({
-          event: "retry_scheduled",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          attempt: entry.retryAttempt + 1,
-          backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-          reason: "stall detected",
-        });
+        logger.info(
+          { event: "retry_scheduled", issueId, identifier: entry.identifier, attempt: entry.retryAttempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: "stall detected" },
+          "Retry scheduled after stall",
+        );
         scheduleRetry(
           this.state,
           issueId,
@@ -536,18 +477,9 @@ export class Orchestrator {
 
       if (isTerminalState(issue.state, terminalStates)) {
         logger.info(
-          { issueId: issue.id, state: issue.state },
+          { event: "worker_exit", issueId: issue.id, identifier: entry.identifier, reason: "normal", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens, state: issue.state },
           "Issue is terminal, terminating worker",
         );
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: entry.identifier,
-          reason: "normal",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
         this.state.running.delete(issue.id);
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
@@ -563,18 +495,9 @@ export class Orchestrator {
       } else {
         // Non-active, non-terminal: stop without cleanup
         logger.info(
-          { issueId: issue.id, state: issue.state },
+          { event: "worker_exit", issueId: issue.id, identifier: entry.identifier, reason: "external_cancel", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens, state: issue.state },
           "Issue is non-active, stopping worker",
         );
-        this.deps.executionLog?.append({
-          event: "worker_exit",
-          timestamp: new Date().toISOString(),
-          issueId: issue.id,
-          identifier: entry.identifier,
-          reason: "external_cancel",
-          turns: entry.turnCount,
-          totalTokens: entry.tokenUsage.totalTokens,
-        });
         this.state.running.delete(issue.id);
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
@@ -586,25 +509,10 @@ export class Orchestrator {
   private finalizeWorkerTokens(entry: RunningEntry): void {
     addTokenUsage(this.state, entry);
 
-    if (this.deps.tokenLog) {
-      try {
-        this.deps.tokenLog.append({
-          identifier: entry.identifier,
-          issueId: entry.issue.id,
-          inputTokens: entry.tokenUsage.inputTokens,
-          outputTokens: entry.tokenUsage.outputTokens,
-          totalTokens: entry.tokenUsage.totalTokens,
-          turns: entry.turnCount,
-          retryAttempt: entry.retryAttempt,
-          completedAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        logger.warn(
-          { identifier: entry.identifier, error: String(err) },
-          "Token log write failed",
-        );
-      }
-    }
+    logger.info(
+      { event: "token_usage", identifier: entry.identifier, issueId: entry.issue.id, inputTokens: entry.tokenUsage.inputTokens, outputTokens: entry.tokenUsage.outputTokens, totalTokens: entry.tokenUsage.totalTokens, turns: entry.turnCount, retryAttempt: entry.retryAttempt, completedAt: new Date().toISOString() },
+      "Token usage recorded",
+    );
 
     this.deps.tracker
       .updateIssueTokens(entry.issue.id, entry.tokenUsage)
@@ -625,15 +533,10 @@ export class Orchestrator {
     const entry = this.state.running.get(issueId);
     if (!entry) return;
 
-    this.deps.executionLog?.append({
-      event: "worker_exit",
-      timestamp: new Date().toISOString(),
-      issueId,
-      identifier: entry.identifier,
-      reason,
-      turns: entry.turnCount,
-      totalTokens: entry.tokenUsage.totalTokens,
-    });
+    logger.info(
+      { event: "worker_exit", issueId, identifier: entry.identifier, reason, turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
+      "Worker exit",
+    );
 
     this.state.running.delete(issueId);
     this.state.claimed.delete(issueId);
@@ -656,29 +559,20 @@ export class Orchestrator {
           this.deps.config.agent.active_reset_state,
         );
         logger.info({ issueId }, "Issue reset to active state for retry");
-        this.deps.executionLog?.append({
-          event: "tracker_state_updated",
-          timestamp: new Date().toISOString(),
-          issueId,
-          identifier: entry.identifier,
-          fromState: entry.issue.state,
-          toState: this.deps.config.agent.active_reset_state,
-        });
+        logger.info(
+          { event: "tracker_state_updated", issueId, identifier: entry.identifier, fromState: entry.issue.state, toState: this.deps.config.agent.active_reset_state },
+          "Tracker state updated",
+        );
       } catch (err) {
         logger.warn(
           { issueId, error: String(err) },
           "Failed to reset issue state for retry",
         );
       }
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: entry.identifier,
-        attempt: entry.retryAttempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: error ?? "worker failed",
-      });
+      logger.info(
+        { event: "retry_scheduled", issueId, identifier: entry.identifier, attempt: entry.retryAttempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: error ?? "worker failed" },
+        "Retry scheduled after worker failure",
+      );
       scheduleRetry(
         this.state,
         issueId,
@@ -703,15 +597,10 @@ export class Orchestrator {
     try {
       candidates = await this.deps.tracker.fetchCandidateIssues();
     } catch {
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: retry.identifier,
-        attempt: retry.attempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: "retry poll failed",
-      });
+      logger.info(
+        { event: "retry_scheduled", issueId, identifier: retry.identifier, attempt: retry.attempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: "retry poll failed" },
+        "Retry scheduled after poll failure",
+      );
       scheduleRetry(
         this.state,
         issueId,
@@ -733,15 +622,10 @@ export class Orchestrator {
     }
 
     if (availableSlots(this.state, this.state.maxConcurrentAgents) <= 0) {
-      this.deps.executionLog?.append({
-        event: "retry_scheduled",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier: retry.identifier,
-        attempt: retry.attempt + 1,
-        backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-        reason: "no available orchestrator slots",
-      });
+      logger.info(
+        { event: "retry_scheduled", issueId, identifier: retry.identifier, attempt: retry.attempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: "no available orchestrator slots" },
+        "Retry scheduled due to no available slots",
+      );
       scheduleRetry(
         this.state,
         issueId,
@@ -762,7 +646,6 @@ export class Orchestrator {
     issueId: string,
     event: AgentEvent,
     turn: number,
-    turnLog: TurnLog | null,
     toolCallsByTurn: Map<number, string[]> | null,
     workspacePath: string,
   ): void {
@@ -792,26 +675,36 @@ export class Orchestrator {
         });
     }
 
-    // Log agent events to turn log
-    if (turnLog) {
-      if (
-        event.message &&
-        (event.event === "assistant" || event.event === "message")
-      ) {
-        turnLog.logAssistantMessage(turn, event.message);
-      }
-      if (event.toolName) {
-        turnLog.logToolUse(turn, event.toolName, event.toolInput);
-        toolCallsByTurn?.get(turn)?.push(event.toolName) ??
-          toolCallsByTurn?.set(turn, [event.toolName]);
-      }
-      if (event.event === "tool_result" && event.rawEvent) {
-        const output =
-          typeof event.rawEvent.result === "string"
-            ? event.rawEvent.result
-            : (event.message ?? "");
-        turnLog.logToolResult(turn, event.toolName ?? "unknown", output);
-      }
+    // Log agent events
+    if (
+      event.message &&
+      (event.event === "assistant" || event.event === "message")
+    ) {
+      logger.info(
+        { event: "agent_message", issueId, turn, message: event.message },
+        "Agent message",
+      );
+    }
+    if (event.toolName) {
+      logger.info(
+        { event: "agent_tool_use", issueId, turn, tool: event.toolName, input: event.toolInput },
+        "Agent tool use",
+      );
+      toolCallsByTurn?.get(turn)?.push(event.toolName) ??
+        toolCallsByTurn?.set(turn, [event.toolName]);
+    }
+    if (event.event === "tool_result" && event.rawEvent) {
+      const output =
+        typeof event.rawEvent.result === "string"
+          ? event.rawEvent.result
+          : (event.message ?? "");
+      const truncated = output.length > 10000
+        ? output.slice(0, 10000) + "...[truncated]"
+        : output;
+      logger.info(
+        { event: "agent_tool_result", issueId, turn, tool: event.toolName ?? "unknown", output: truncated },
+        "Agent tool result",
+      );
     }
 
     if (event.usage) {

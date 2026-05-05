@@ -5,7 +5,7 @@ import type { WorkspaceSource } from "../model/workflow.ts";
 import { sanitizeKey, validateContainment, expandPath } from "./safety.ts";
 import { runHookIfConfigured, runHookBestEffort, type HooksConfig } from "./hooks.ts";
 import { initSources, cleanupSources } from "./sources.ts";
-import { writeMetaJson, readMetaJson } from "../logging/turn-log.ts";
+import { writeMetaJson, readMetaJson } from "./meta.ts";
 import { WorkspaceSafetyError, WorkspaceCreationError } from "../errors/errors.ts";
 import { logger } from "../logging/logger.ts";
 

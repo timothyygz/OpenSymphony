@@ -18,13 +18,13 @@ export class Dashboard {
   private lastRenderAt = 0;
   private readonly minIdleRerenderMs = 1000;
 
-  private readonly tokenLogPath: string;
+  private readonly logFilePath: string;
   private cachedHistory: HistoryStats | null = null;
   private lastHistoryQueryAt = 0;
 
-  constructor(orchestrator: Orchestrator, tokenLogPath: string) {
+  constructor(orchestrator: Orchestrator, logFilePath: string) {
     this.orchestrator = orchestrator;
-    this.tokenLogPath = tokenLogPath;
+    this.logFilePath = logFilePath;
     this.refreshMs = parseInt(process.env.SYMPHONY_TUI_REFRESH_MS ?? "", 10) || DEFAULT_REFRESH_MS;
   }
 
@@ -91,7 +91,7 @@ export class Dashboard {
       return this.cachedHistory;
     }
 
-    this.cachedHistory = await aggregate(this.tokenLogPath);
+    this.cachedHistory = await aggregate(this.logFilePath);
     this.lastHistoryQueryAt = now;
     return this.cachedHistory;
   }
