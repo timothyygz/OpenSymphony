@@ -65,6 +65,7 @@ export type WorkspaceSource = z.infer<typeof workspaceSourceSchema>;
 export const workspaceConfigSchema = z.object({
   root: z.string().default(""),
   sources: z.array(workspaceSourceSchema).optional().default([]),
+  cleanup_on_terminal: z.boolean().default(false),
 });
 export type WorkspaceConfig = z.infer<typeof workspaceConfigSchema>;
 
@@ -101,7 +102,7 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export const serviceConfigSchema = z.object({
   tracker: trackerConfigSchema,
   polling: pollingConfigSchema.optional().default({ interval_ms: 30000 }),
-  workspace: workspaceConfigSchema.optional().default({ root: "", sources: [] }),
+  workspace: workspaceConfigSchema.optional().default({ root: "", sources: [], cleanup_on_terminal: false }),
   hooks: hooksConfigSchema.optional().default({ timeout_ms: 60000 }),
   agent: agentConfigSchema.optional().default({ kind: "claude-code", stall_timeout_ms: 300000, max_concurrent_agents: 10, max_turns: 20, max_retry_backoff_ms: 300000, max_concurrent_agents_by_state: {}, config: {}, in_progress_state: "进行中", active_reset_state: "待处理" }),
   server: z.object({

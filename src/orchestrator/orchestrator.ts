@@ -552,9 +552,11 @@ export class Orchestrator {
         addRuntimeSeconds(this.state, entry);
         this.finalizeWorkerTokens(entry);
         this.state.claimed.delete(issue.id);
-        this.deps.workspaceManager
-          .cleanupWorkspace(issue.identifier)
-          .catch(() => {});
+        if (this.deps.config.workspace.cleanup_on_terminal) {
+          this.deps.workspaceManager
+            .cleanupWorkspace(issue.identifier)
+            .catch(() => {});
+        }
       } else if (isActiveState(issue.state, activeStates)) {
         // Update in-memory issue snapshot
         entry.issue = issue;
@@ -835,6 +837,10 @@ export class Orchestrator {
 
   // T34b: Startup cleanup (original)
   private async startupCleanup(): Promise<void> {
+    if (!this.deps.config.workspace.cleanup_on_terminal) {
+      logger.info("Workspace cleanup on terminal disabled, skipping startup cleanup");
+      return;
+    }
     try {
       const terminalIssues = await this.deps.tracker.fetchIssuesByStates(
         this.deps.config.tracker.terminal_states,
