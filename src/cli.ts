@@ -86,11 +86,15 @@ async function main() {
   });
 
   // Graceful shutdown
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
     if (dashboard) dashboard.stop();
     logger.info("Shutting down...");
     watcher.stop();
-    orchestrator.stop();
+    await orchestrator.stop();
     process.exit(0);
   };
 
