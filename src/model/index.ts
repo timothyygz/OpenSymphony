@@ -15,7 +15,9 @@ export type {
   LiveSession,
   RetryEntry,
   RunningEntry,
+} from "./session.ts";
+export type {
   AggregateTotals,
   PeriodStats,
   HistoryStats,
-} from "./session.ts";
+} from "./statistics.ts";

@@ -1,12 +1,5 @@
+import type { HooksConfig } from "../model/index.ts";
 import { logger } from "../logging/logger.ts";
-
-export interface HooksConfig {
-  after_create?: string;
-  before_run?: string;
-  after_run?: string;
-  before_remove?: string;
-  timeout_ms: number;
-}
 
 type HookName = "after_create" | "before_run" | "after_run" | "before_remove";
 
