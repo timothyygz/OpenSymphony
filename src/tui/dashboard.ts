@@ -3,7 +3,7 @@ import { formatHeader, formatHistory, formatRunningTable, formatBackoffQueue } f
 import { Sparkline } from "./sparkline.ts";
 import { aggregate } from "../metrics/aggregator.ts";
 import type { Orchestrator } from "../orchestrator/orchestrator.ts";
-import type { HistoryStats } from "../model/session.ts";
+import type { HistoryStats } from "../model/statistics.ts";
 
 const DEFAULT_REFRESH_MS = 1000;
 const HISTORY_REFRESH_MS = 30_000;
@@ -18,13 +18,13 @@ export class Dashboard {
   private lastRenderAt = 0;
   private readonly minIdleRerenderMs = 1000;
 
-  private readonly tokenLogPath: string;
+  private readonly logFilePath: string;
   private cachedHistory: HistoryStats | null = null;
   private lastHistoryQueryAt = 0;
 
-  constructor(orchestrator: Orchestrator, tokenLogPath: string) {
+  constructor(orchestrator: Orchestrator, logFilePath: string) {
     this.orchestrator = orchestrator;
-    this.tokenLogPath = tokenLogPath;
+    this.logFilePath = logFilePath;
     this.refreshMs = parseInt(process.env.SYMPHONY_TUI_REFRESH_MS ?? "", 10) || DEFAULT_REFRESH_MS;
   }
 
@@ -91,7 +91,7 @@ export class Dashboard {
       return this.cachedHistory;
     }
 
-    this.cachedHistory = await aggregate(this.tokenLogPath);
+    this.cachedHistory = await aggregate(this.logFilePath);
     this.lastHistoryQueryAt = now;
     return this.cachedHistory;
   }
@@ -112,12 +112,14 @@ function stateFingerprint(state: {
   completed: Set<string>;
   aggregateTotals: { totalTokens: number; secondsRunning: number };
 }): string {
-  const running = [...state.running.values()]
-    .map((e) => `${e.identifier}:${e.lastAgentEvent}:${e.turnCount}:${e.tokenUsage.totalTokens}`)
-    .join("|");
-  const retry = [...state.retryAttempts.values()]
-    .map((e) => `${e.identifier}:${e.dueAtMs}`)
-    .join("|");
+  const running = Array.from(
+    state.running.values(),
+    (e) => `${e.identifier}:${e.lastAgentEvent}:${e.turnCount}:${e.tokenUsage.totalTokens}`,
+  ).join("|");
+  const retry = Array.from(
+    state.retryAttempts.values(),
+    (e) => `${e.identifier}:${e.dueAtMs}`,
+  ).join("|");
   const totals = `${state.aggregateTotals.totalTokens}:${Math.floor(state.aggregateTotals.secondsRunning)}`;
   return `${running}|${retry}|${state.completed.size}|${totals}`;
 }
