@@ -7,14 +7,14 @@ export interface WorkflowDefinition {
 
 // --- Tracker config ---
 
-export const trackerConfigSchema = z.object({
-  kind: z.string(),
-  endpoint: z.string().optional(),
-  api_key: z.string().optional(),
-  project_slug: z.string().optional(),
+const commonTrackerFields = {
   active_states: z.array(z.string()).default(["Todo", "In Progress"]),
   terminal_states: z.array(z.string()).default(["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]),
-  // Feishu Bitable specific
+};
+
+const feishuBitableTrackerSchema = z.object({
+  kind: z.literal("feishu_bitable"),
+  endpoint: z.string().optional(),
   app_id: z.string().optional(),
   app_secret: z.string().optional(),
   app_token: z.string().optional(),
@@ -29,7 +29,44 @@ export const trackerConfigSchema = z.object({
   join_command_field: z.string().optional(),
   progress_field: z.string().optional(),
   result_summary_field: z.string().optional(),
+  ...commonTrackerFields,
 });
+
+const linearTrackerSchema = z.object({
+  kind: z.literal("linear"),
+  endpoint: z.string().optional(),
+  api_key: z.string().optional(),
+  project_slug: z.string().optional(),
+  ...commonTrackerFields,
+});
+
+const genericTrackerSchema = z.object({
+  kind: z.string(),
+  endpoint: z.string().optional(),
+  api_key: z.string().optional(),
+  project_slug: z.string().optional(),
+  app_id: z.string().optional(),
+  app_secret: z.string().optional(),
+  app_token: z.string().optional(),
+  table_id: z.string().optional(),
+  state_field: z.string().optional(),
+  identifier_field: z.string().optional(),
+  title_field: z.string().optional(),
+  description_field: z.string().optional(),
+  priority_field: z.string().optional(),
+  labels_field: z.string().optional(),
+  tokens_field: z.string().optional(),
+  join_command_field: z.string().optional(),
+  progress_field: z.string().optional(),
+  result_summary_field: z.string().optional(),
+  ...commonTrackerFields,
+});
+
+export const trackerConfigSchema = z.union([
+  feishuBitableTrackerSchema,
+  linearTrackerSchema,
+  genericTrackerSchema,
+]);
 export type TrackerConfig = z.infer<typeof trackerConfigSchema>;
 
 // --- Polling config ---
@@ -65,6 +102,7 @@ export type WorkspaceSource = z.infer<typeof workspaceSourceSchema>;
 export const workspaceConfigSchema = z.object({
   root: z.string().default(""),
   sources: z.array(workspaceSourceSchema).optional().default([]),
+  cleanup_on_terminal: z.boolean().default(false),
 });
 export type WorkspaceConfig = z.infer<typeof workspaceConfigSchema>;
 
@@ -103,7 +141,7 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export const serviceConfigSchema = z.object({
   tracker: trackerConfigSchema,
   polling: pollingConfigSchema.optional().default({ interval_ms: 30000 }),
-  workspace: workspaceConfigSchema.optional().default({ root: "", sources: [] }),
+  workspace: workspaceConfigSchema.optional().default({ root: "", sources: [], cleanup_on_terminal: false }),
   hooks: hooksConfigSchema.optional().default({ timeout_ms: 60000 }),
   agent: agentConfigSchema.optional().default({ kind: "claude-code", stall_timeout_ms: 300000, max_concurrent_agents: 10, max_turns: 20, max_retry_backoff_ms: 300000, max_retry_attempts: 3, max_concurrent_agents_by_state: {}, config: {}, in_progress_state: "进行中", active_reset_state: "待处理", permanent_failure_state: "永久失败" }),
   server: z.object({

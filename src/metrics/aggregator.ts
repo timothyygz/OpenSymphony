@@ -1,5 +1,5 @@
 import { logger } from "../logging/logger.ts";
-import type { HistoryStats, PeriodStats } from "../model/session.ts";
+import type { HistoryStats, PeriodStats } from "../model/statistics.ts";
 
 const EMPTY_STATS: PeriodStats = {
   inputTokens: 0,
@@ -36,6 +36,8 @@ function startOfMonth(d: Date): Date {
 function parseLine(line: string): ParsedRecord | null {
   try {
     const r = JSON.parse(line);
+    // Only parse token_usage events from symphony.log
+    if (r.event !== "token_usage") return null;
     if (typeof r.completedAt !== "string") return null;
     return {
       inputTokens: Number(r.inputTokens) || 0,
@@ -69,10 +71,7 @@ export async function aggregate(filePath: string): Promise<HistoryStats> {
     if (!trimmed) continue;
 
     const r = parseLine(trimmed);
-    if (!r) {
-      logger.warn({ line: trimmed.slice(0, 100) }, "Skipping corrupted token log line");
-      continue;
-    }
+    if (!r) continue;
 
     const ts = new Date(r.completedAt).getTime();
     if (isNaN(ts)) {

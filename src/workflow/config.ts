@@ -4,6 +4,7 @@ import { tmpdir, homedir } from "node:os";
 import { serviceConfigSchema, type ServiceConfig } from "../model/index.ts";
 import { ConfigValidationError } from "../errors/errors.ts";
 import { logger } from "../logging/logger.ts";
+import { expandPath } from "../workspace/safety.ts";
 
 interface GlobalSettings {
   tracker?: {
@@ -47,17 +48,6 @@ export function resolveEnvValue(value: unknown): unknown {
   const resolved = process.env[varName];
   if (resolved === "" || resolved === undefined) return undefined;
   return resolved;
-}
-
-export function expandPath(pathStr: string, baseDir: string): string {
-  let expanded = pathStr;
-  if (expanded.startsWith("~")) {
-    expanded = expanded.replace(/^~/, homedir());
-  }
-  if (!expanded.startsWith("/")) {
-    expanded = resolve(baseDir, expanded);
-  }
-  return expanded;
 }
 
 export function buildServiceConfig(
