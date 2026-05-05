@@ -108,15 +108,10 @@ export class Orchestrator {
         { issueId, identifier, nextAttempt, maxAttempts },
         "Max retry attempts exceeded, marking as permanently failed",
       );
-      this.deps.executionLog?.append({
-        event: "permanent_failure",
-        timestamp: new Date().toISOString(),
-        issueId,
-        identifier,
-        attempt: nextAttempt,
-        maxAttempts,
-        error: error ?? undefined,
-      });
+      logger.info(
+        { event: "permanent_failure", issueId, identifier, attempt: nextAttempt, maxAttempts, error: error ?? undefined },
+        "Permanent failure recorded",
+      );
       this.state.claimed.delete(issueId);
       this.deps.tracker
         .updateIssueState(issueId, this.deps.config.agent.permanent_failure_state)
@@ -129,15 +124,10 @@ export class Orchestrator {
       return false;
     }
 
-    this.deps.executionLog?.append({
-      event: "retry_scheduled",
-      timestamp: new Date().toISOString(),
-      issueId,
-      identifier,
-      attempt: nextAttempt,
-      backoffMs: this.deps.config.agent.max_retry_backoff_ms,
-      reason: error ?? "retry",
-    });
+    logger.info(
+      { event: "retry_scheduled", issueId, identifier, attempt: nextAttempt, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: error ?? "retry" },
+      "Retry scheduled",
+    );
     scheduleRetry(
       this.state,
       issueId,
