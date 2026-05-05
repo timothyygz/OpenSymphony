@@ -1,4 +1,3 @@
-import { spawn as nodeSpawn } from "node:child_process";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   SDKMessage,
@@ -7,8 +6,6 @@ import type {
   SDKSystemMessage,
   Options,
   Query,
-  SpawnOptions,
-  SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentAdapter,
