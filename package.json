@@ -1,8 +1,27 @@
 {
-  "name": "symphony-demo",
+  "name": "@timothyygz/open-symphony",
+  "version": "0.1.0",
+  "description": "Coding agent orchestration service based on OpenAI Symphony SPEC",
   "module": "src/cli.ts",
   "type": "module",
-  "private": true,
+  "bin": {
+    "symphony": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/timothyygz/OpenSymphony"
+  },
+  "license": "MIT",
   "scripts": {
     "start": "bun run src/cli.ts",
     "test": "bun test",

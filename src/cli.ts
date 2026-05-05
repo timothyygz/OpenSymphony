@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 function parseArgs(args: string[]): { workflowPath?: string; noTui: boolean } {
   if (args.includes("--help") || args.includes("-h")) {
     console.log("Usage: symphony [options] [path-to-WORKFLOW.md]");
