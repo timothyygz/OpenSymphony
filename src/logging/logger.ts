@@ -1,5 +1,15 @@
 import pino from "pino";
 import { multistream } from "pino";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+
+export const LOGS_DIR = resolve(homedir(), ".open-symphony", "logs");
+
+export function ensureLogDir(): string {
+  mkdirSync(LOGS_DIR, { recursive: true });
+  return LOGS_DIR;
+}
 
 let _logger: pino.Logger | null = null;
 let _logFilePath: string | null = null;
