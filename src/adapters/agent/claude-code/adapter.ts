@@ -16,10 +16,6 @@ import type {
 } from "../types.ts";
 import { logger } from "../../../logging/logger.ts";
 
-const DEFAULT_TURN_TIMEOUT_MS = 3_600_000;
-const LOG_PROMPT_MAX_LENGTH = 1000;
-const LOG_TEXT_MAX_LENGTH = 300;
-
 export interface ClaudeCodeConfig {
   command?: string;
   outputFormat?: string;
@@ -139,7 +135,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   constructor(config: ClaudeCodeConfig = {}) {
     this.command = config.command;
-    this.timeoutMs = config.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
+    this.timeoutMs = config.timeoutMs ?? 3600000;
     this.approvalPolicy = config.approvalPolicy;
   }
 
@@ -166,8 +162,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     onEvent: (event: AgentEvent) => void,
   ): Promise<TurnResult> {
     const sessionId =
-      session.metadata.realSessionId ??
-      session.metadata.sessionId;
+      (session.metadata.realSessionId as string) ??
+      (session.metadata.sessionId as string | undefined);
 
     const abortController = new AbortController();
     let timedOut = false;
@@ -181,7 +177,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }, this.timeoutMs);
 
     const options: Options = {
-      cwd: session.metadata.workspacePath,
+      cwd: session.metadata.workspacePath as string,
       abortController,
     };
 
@@ -198,7 +194,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       options.allowDangerouslySkipPermissions = true;
     }
 
-    const mcpServers = session.metadata.mcpServers;
+    const mcpServers = session.metadata.mcpServers as
+      | Record<string, import("@anthropic-ai/claude-agent-sdk").McpServerConfig>
+      | undefined;
     if (mcpServers) {
       options.mcpServers = mcpServers;
       const allowedTools = [
@@ -225,8 +223,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         sessionId: session.id,
         turn,
         prompt:
-          prompt.length > LOG_PROMPT_MAX_LENGTH
-            ? prompt.slice(0, LOG_PROMPT_MAX_LENGTH) + "...[truncated]"
+          prompt.length > 1000
+            ? prompt.slice(0, 1000) + "...[truncated]"
             : prompt,
         resume: session.turnCount > 0 && sessionId ? sessionId : undefined,
       },
@@ -264,8 +262,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
                 sessionId: msg.session_id,
                 turn,
                 text:
-                  text.length > LOG_TEXT_MAX_LENGTH
-                    ? text.slice(0, LOG_TEXT_MAX_LENGTH) + "...[truncated]"
+                  text.length > 300
+                    ? text.slice(0, 300) + "...[truncated]"
                     : text,
               },
               "Assistant text",

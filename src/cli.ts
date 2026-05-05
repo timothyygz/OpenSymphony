@@ -61,6 +61,14 @@ async function main() {
     workflowDir: workflowDir,
   });
 
+  const { TokenLog } = await import("./metrics/token-log.ts");
+  const tokenLogPath = resolvedPath.substring(0, resolvedPath.lastIndexOf("/")) + "/.symphony-tokens.jsonl";
+  const tokenLog = new TokenLog(tokenLogPath);
+
+  const { ExecutionLog } = await import("./logging/execution-log.ts");
+  const executionLogPath = resolvedPath.substring(0, resolvedPath.lastIndexOf("/")) + "/.symphony-execution.jsonl";
+  const executionLog = new ExecutionLog(executionLogPath);
+
   // Create orchestrator
   const orchestrator = new Orchestrator({
     config,
@@ -68,13 +76,15 @@ async function main() {
     tracker,
     agent,
     workspaceManager,
+    tokenLog,
+    executionLog,
   });
 
   // Dashboard (TUI mode)
   let dashboard: { start(): void; stop(): void } | null = null;
   if (useTui) {
     const { Dashboard } = await import("./tui/dashboard.ts");
-    dashboard = new Dashboard(orchestrator, `${workflowDir}/symphony.log`);
+    dashboard = new Dashboard(orchestrator, tokenLogPath);
   }
 
   // Start workflow watcher

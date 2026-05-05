@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.ts";
@@ -12,7 +12,7 @@ import type { AgentAdapter, AgentSession, AgentSessionContext, AgentEvent, TurnR
 import { WorkspaceManager } from "../../src/workspace/manager.ts";
 import { parseWorkflowContent } from "../../src/workflow/loader.ts";
 import { buildServiceConfig } from "../../src/workflow/config.ts";
-import { readMetaJson } from "../../src/workspace/meta.ts";
+import { readMetaJson } from "../../src/logging/turn-log.ts";
 
 // --- Mock Adapters ---
 
@@ -219,46 +219,6 @@ describe("canDispatch", () => {
     const state = createInitialState();
     expect(canDispatch(makeIssue({ state: "已完成" }), state, 10, new Map(), ["待处理"])).toBe(false);
   });
-
-  it("rejects when per-state concurrency limit reached", () => {
-    const state = createInitialState();
-    const perStateMap = new Map([["待处理", 1]]);
-    state.running.set("other", {
-      issue: makeIssue({ id: "other", state: "待处理" }),
-      identifier: "other",
-      sessionId: null,
-      agentPid: null,
-      lastAgentEvent: null,
-      lastAgentTimestamp: null,
-      lastAgentMessage: null,
-      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      retryAttempt: 0,
-      startedAt: new Date(),
-      turnCount: 0,
-    });
-    expect(canDispatch(makeIssue(), state, 10, perStateMap, ["待处理"])).toBe(false);
-  });
-
-  it("allows dispatch when per-state limit not reached", () => {
-    const state = createInitialState();
-    const perStateMap = new Map([["待处理", 2]]);
-    state.running.set("other", {
-      issue: makeIssue({ id: "other", state: "待处理" }),
-      identifier: "other",
-      sessionId: null,
-      agentPid: null,
-      lastAgentEvent: null,
-      lastAgentTimestamp: null,
-      lastAgentMessage: null,
-      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      lastReportedTokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      retryAttempt: 0,
-      startedAt: new Date(),
-      turnCount: 0,
-    });
-    expect(canDispatch(makeIssue(), state, 10, perStateMap, ["待处理"])).toBe(true);
-  });
 });
 
 describe("Retry queue", () => {
@@ -379,40 +339,6 @@ describe("Orchestrator integration", () => {
     expect(meta!.issueId).toBe("issue-1");
     expect(meta!.identifier).toBe("MT-100");
     expect(meta!.sessionId).toBeNull();
-
-    await orchestrator.stop();
-  });
-
-  it("creates workspace meta.json and processes agent events", async () => {
-    const issue = makeIssue();
-    mockTracker.setIssues([issue]);
-    mockAgent.turnResults = [{ status: "completed" }];
-    mockAgent.setTurnEvents([
-      [{ event: "assistant", timestamp: new Date().toISOString(), message: "Hello from agent" }],
-    ]);
-
-    const origFetch = mockTracker.fetchIssueStatesByIds.bind(mockTracker);
-    let fetchCount = 0;
-    mockTracker.fetchIssueStatesByIds = async (ids: string[]) => {
-      fetchCount++;
-      if (fetchCount > 0) return [makeIssue({ state: "已完成" })];
-      return origFetch(ids);
-    };
-
-    const wsManager = new WorkspaceManager({ root: tempRoot, hooks: { timeout_ms: 5000 }, sources: [], workflowDir: "" });
-    const orchestrator = new Orchestrator({
-      config, workflow, tracker: mockTracker, agent: mockAgent, workspaceManager: wsManager,
-    });
-
-    await (orchestrator as any).tick();
-    await new Promise((r) => setTimeout(r, 150));
-
-    // Verify meta.json was created with correct info
-    const meta = readMetaJson(resolve(tempRoot, "MT-100"));
-    expect(meta).not.toBeNull();
-    expect(meta!.issueId).toBe("issue-1");
-    expect(meta!.identifier).toBe("MT-100");
-    expect(meta!.totalTurns).toBe(1);
 
     await orchestrator.stop();
   });

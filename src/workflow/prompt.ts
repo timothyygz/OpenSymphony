@@ -7,30 +7,19 @@ const engine = new Liquid({
   strictFilters: true,
 });
 
-const templateCache = new Map<string, ReturnType<typeof engine.parse>>();
-
-function parseCached(template: string): ReturnType<typeof engine.parse> {
-  const cached = templateCache.get(template);
-  if (cached) return cached;
-  const parsed = engine.parse(template);
-  templateCache.set(template, parsed);
-  return parsed;
-}
-
 export function renderTemplate(
   template: string,
   issue: Issue,
   attempt: number | null,
 ): string {
-  let tpl: ReturnType<typeof engine.parse>;
   try {
-    tpl = parseCached(template);
+    engine.parse(template);
   } catch (err) {
     throw new TemplateParseError(String(err));
   }
 
   try {
-    return engine.renderSync(tpl, {
+    return engine.parseAndRenderSync(template, {
       issue: {
         id: issue.id,
         identifier: issue.identifier,

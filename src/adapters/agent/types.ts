@@ -1,6 +1,5 @@
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { Issue, TokenUsage } from "../../model/index.ts";
-import type { RateLimitInfo } from "../../orchestrator/state.ts";
 
 export type { TokenUsage };
 
@@ -18,26 +17,17 @@ export interface AgentEvent {
   timestamp: string;
   message?: string;
   usage?: TokenUsage;
-  rateLimits?: RateLimitInfo;
+  rateLimits?: unknown;
   rawEvent?: ClaudeStreamEvent;
   toolName?: string;
   toolInput?: unknown;
   sessionId?: string;
 }
 
-export interface AgentSessionMetadata {
-  workspacePath: string;
-  sessionId?: string;
-  realSessionId?: string;
-  issueIdentifier?: string;
-  mcpServers?: Record<string, McpServerConfig>;
-  [key: string]: unknown;
-}
-
 export interface AgentSession {
   id: string;
   turnCount: number;
-  metadata: AgentSessionMetadata;
+  metadata: Record<string, unknown>;
 }
 
 export interface AgentSessionContext {

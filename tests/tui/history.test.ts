@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { formatHistory } from "../../src/tui/layout.ts";
-import type { HistoryStats } from "../../src/model/statistics.ts";
+import type { HistoryStats } from "../../src/model/session.ts";
 import { ANSI } from "../../src/tui/renderer.ts";
 
 function makeStats(overrides: Partial<{ totalTokens: number; issueCount: number }> = {}): HistoryStats {

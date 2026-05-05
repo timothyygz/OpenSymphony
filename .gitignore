@@ -29,6 +29,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # IDE
 .idea
 
+# symphony workspace data
+.symphony/
+
 # token logs
 .symphony-tokens.jsonl
 .vscode

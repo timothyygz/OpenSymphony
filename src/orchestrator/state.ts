@@ -1,12 +1,5 @@
 import type { Issue, RunningEntry, RetryEntry, AggregateTotals } from "../model/index.ts";
 
-export interface RateLimitInfo {
-  requestsRemaining?: number;
-  tokensRemaining?: number;
-  resetAt?: number;
-  [key: string]: unknown;
-}
-
 export interface OrchestratorState {
   pollIntervalMs: number;
   maxConcurrentAgents: number;
@@ -15,7 +8,7 @@ export interface OrchestratorState {
   retryAttempts: Map<string, RetryEntry>;
   completed: Set<string>;
   aggregateTotals: AggregateTotals;
-  rateLimits: RateLimitInfo | null;
+  rateLimits: unknown;
   nextTickAt: number | null;
 }
 

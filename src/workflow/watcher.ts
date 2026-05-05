@@ -1,12 +1,9 @@
 import { watchFile, unwatchFile } from "node:fs";
 import { type ServiceConfig } from "../model/index.ts";
-import { loadWorkflow, resolveWorkflowPath } from "./loader.ts";
+import { loadWorkflow, resolveWorkflowPath, parseWorkflowContent } from "./loader.ts";
 import { buildServiceConfig } from "./config.ts";
 import { logger } from "../logging/logger.ts";
 import type { WorkflowDefinition } from "../model/index.ts";
-
-const FILE_WATCH_INTERVAL_MS = 1000;
-const RELOAD_DEBOUNCE_MS = 300;
 
 export type WorkflowReloadResult =
   | { ok: true; workflow: WorkflowDefinition; config: ServiceConfig }
@@ -32,7 +29,7 @@ export class WorkflowWatcher {
       this.lastGoodConfig = initial.config;
     }
 
-    watchFile(this.watchedPath, { interval: FILE_WATCH_INTERVAL_MS }, () => {
+    watchFile(this.watchedPath, { interval: 1000 }, () => {
       this.debouncedReload();
     });
 
@@ -79,6 +76,22 @@ export class WorkflowWatcher {
         logger.error({ error: result.error }, "Workflow reload failed, keeping last known good config");
       }
       this.onChange?.(result);
-    }, RELOAD_DEBOUNCE_MS);
+    }, 300);
+  }
+}
+
+export function reloadWorkflowFromString(
+  content: string,
+  workflowDir: string,
+  lastGoodWorkflow: WorkflowDefinition | null,
+  lastGoodConfig: ServiceConfig | null,
+): WorkflowReloadResult {
+  try {
+    const workflow = parseWorkflowContent(content);
+    const config = buildServiceConfig(workflow.config, workflowDir);
+    return { ok: true, workflow, config };
+  } catch (err) {
+    logger.error({ error: err instanceof Error ? err.message : String(err) }, "Workflow reload failed");
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

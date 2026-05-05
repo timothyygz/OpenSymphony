@@ -1,7 +1,7 @@
 import type { AgentEvent } from "../adapters/agent/types.ts";
 import type { RunningEntry } from "../model/index.ts";
 import type { OrchestratorState } from "./state.ts";
-import { updateMetaJson } from "../workspace/meta.ts";
+import { updateMetaJson } from "../logging/turn-log.ts";
 import type { TrackerAdapter } from "../adapters/tracker/types.ts";
 import { logger } from "../logging/logger.ts";
 

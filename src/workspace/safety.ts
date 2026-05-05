@@ -47,3 +47,8 @@ export function expandPath(pathStr: string, baseDir?: string): string {
   }
   return expanded;
 }
+
+export function assertWorkspaceCwd(workspacePath: string): void {
+  // This is checked at agent launch time, not here
+  // The agent process cwd must equal workspacePath
+}

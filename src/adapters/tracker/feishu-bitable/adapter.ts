@@ -134,31 +134,23 @@ export class FeishuBitableAdapter implements TrackerAdapter {
   }
 }
 
-function str(val: unknown, fallback?: string): string | undefined {
-  return typeof val === "string" ? val : fallback;
-}
-
-function strArr(val: unknown, fallback: string[]): string[] {
-  return Array.isArray(val) && val.every((v) => typeof v === "string") ? val : fallback;
-}
-
 export function createFeishuBitableAdapter(rawConfig: Record<string, unknown>): TrackerAdapter {
   return new FeishuBitableAdapter({
-    appId: str(rawConfig.app_id, "")!,
-    appSecret: str(rawConfig.app_secret, "")!,
-    appToken: str(rawConfig.app_token, "")!,
-    tableId: str(rawConfig.table_id, "")!,
-    stateField: str(rawConfig.state_field, "")!,
-    identifierField: str(rawConfig.identifier_field, "")!,
-    titleField: str(rawConfig.title_field, "")!,
-    descriptionField: str(rawConfig.description_field, "描述"),
-    priorityField: str(rawConfig.priority_field),
-    labelsField: str(rawConfig.labels_field),
-    tokensField: str(rawConfig.tokens_field),
-    joinCommandField: str(rawConfig.join_command_field),
-    progressField: str(rawConfig.progress_field),
-    resultSummaryField: str(rawConfig.result_summary_field),
-    activeStates: strArr(rawConfig.active_states, ["待处理", "进行中"]),
-    terminalStates: strArr(rawConfig.terminal_states, ["已完成", "已取消"]),
+    appId: rawConfig.app_id as string,
+    appSecret: rawConfig.app_secret as string,
+    appToken: rawConfig.app_token as string,
+    tableId: rawConfig.table_id as string,
+    stateField: rawConfig.state_field as string,
+    identifierField: rawConfig.identifier_field as string,
+    titleField: rawConfig.title_field as string,
+    descriptionField: (rawConfig.description_field as string) ?? "描述",
+    priorityField: rawConfig.priority_field as string | undefined,
+    labelsField: rawConfig.labels_field as string | undefined,
+    tokensField: rawConfig.tokens_field as string | undefined,
+    joinCommandField: rawConfig.join_command_field as string | undefined,
+    progressField: rawConfig.progress_field as string | undefined,
+    resultSummaryField: rawConfig.result_summary_field as string | undefined,
+    activeStates: (rawConfig.active_states as string[]) ?? ["待处理", "进行中"],
+    terminalStates: (rawConfig.terminal_states as string[]) ?? ["已完成", "已取消"],
   });
 }

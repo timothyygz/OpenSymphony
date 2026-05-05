@@ -1,5 +1,4 @@
 const FEISHU_BASE = "https://open.feishu.cn";
-const TOKEN_REFRESH_BUFFER_S = 300;
 
 interface TokenResponse {
   code: number;
@@ -43,8 +42,8 @@ export class FeishuAuth {
     }
 
     this.token = data.tenant_access_token;
-    // Refresh before expiry
-    this.expiresAt = Date.now() + (data.expire - TOKEN_REFRESH_BUFFER_S) * 1000;
+    // Refresh 5 minutes before expiry
+    this.expiresAt = Date.now() + (data.expire - 300) * 1000;
     return this.token;
   }
 

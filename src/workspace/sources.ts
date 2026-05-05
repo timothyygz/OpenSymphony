@@ -2,8 +2,6 @@ import type { WorkspaceSource } from "../model/workflow.ts";
 import { expandPath, sanitizeKey } from "./safety.ts";
 import { logger } from "../logging/logger.ts";
 
-const SPAWN_TIMEOUT_MS = 120_000;
-
 export async function initSources(
   sources: WorkspaceSource[],
   workspacePath: string,
@@ -130,7 +128,7 @@ function exec(command: string, args: string[]): Promise<void> {
 
     const timeout = setTimeout(() => {
       try { proc.kill("SIGTERM"); } catch {}
-    }, SPAWN_TIMEOUT_MS);
+    }, 120000);
 
     proc.exited.then((code) => {
       clearTimeout(timeout);

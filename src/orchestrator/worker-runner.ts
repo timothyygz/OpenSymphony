@@ -22,7 +22,7 @@ import { cancelRetry } from "./retry.ts";
 import { createTrackerMcpServer } from "../adapters/agent/claude-code/tracker-tools.ts";
 import { FeishuBitableAdapter } from "../adapters/tracker/feishu-bitable/adapter.ts";
 import { logger } from "../logging/logger.ts";
-import { writeMetaJson, updateMetaJson } from "../workspace/meta.ts";
+import { writeMetaJson, updateMetaJson } from "../logging/turn-log.ts";
 import type { EventProcessor } from "./event-processor.ts";
 
 export type WorkerExitCallback = (

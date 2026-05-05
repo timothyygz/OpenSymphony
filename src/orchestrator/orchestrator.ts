@@ -14,6 +14,8 @@ import { scheduleRetry } from "./retry.ts";
 
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
+import type { ExecutionLog } from "../logging/execution-log.ts";
+import type { TokenLog } from "../metrics/token-log.ts";
 import { EventProcessor } from "./event-processor.ts";
 import { Reconciler } from "./reconciler.ts";
 import { WorkerRunner } from "./worker-runner.ts";
@@ -24,6 +26,8 @@ export interface OrchestratorDeps {
   tracker: TrackerAdapter;
   agent: import("../adapters/agent/types.ts").AgentAdapter;
   workspaceManager: WorkspaceManager;
+  tokenLog?: TokenLog;
+  executionLog?: ExecutionLog;
 }
 
 export class Orchestrator {
@@ -276,10 +280,15 @@ export class Orchestrator {
     const entry = this.state.running.get(issueId);
     if (!entry) return;
 
-    logger.info(
-      { event: "worker_exit", issueId, identifier: entry.identifier, reason, turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
-      "Worker exit",
-    );
+    this.deps.executionLog?.append({
+      event: "worker_exit",
+      timestamp: new Date().toISOString(),
+      issueId,
+      identifier: entry.identifier,
+      reason,
+      turns: entry.turnCount,
+      totalTokens: entry.tokenUsage.totalTokens,
+    });
 
     this.state.running.delete(issueId);
     this.state.claimed.delete(issueId);
@@ -299,10 +308,14 @@ export class Orchestrator {
           this.deps.config.agent.active_reset_state,
         );
         logger.info({ issueId }, "Issue reset to active state for retry");
-        logger.info(
-          { event: "tracker_state_updated", issueId, identifier: entry.identifier, fromState: entry.issue.state, toState: this.deps.config.agent.active_reset_state },
-          "Tracker state updated",
-        );
+        this.deps.executionLog?.append({
+          event: "tracker_state_updated",
+          timestamp: new Date().toISOString(),
+          issueId,
+          identifier: entry.identifier,
+          fromState: entry.issue.state,
+          toState: this.deps.config.agent.active_reset_state,
+        });
       } catch (err) {
         logger.warn(
           { issueId, error: String(err) },
