@@ -26,12 +26,13 @@ async function main() {
   const { createTracker } = await import("./adapters/tracker/registry.ts");
   const { createAgent } = await import("./adapters/agent/registry.ts");
   const { WorkspaceManager } = await import("./workspace/manager.ts");
-  const { logger, setLogFilePath } = await import("./logging/logger.ts");
+  const { logger, setLogFilePath, ensureLogDir } = await import("./logging/logger.ts");
 
   const resolvedPath = resolveWorkflowPath(workflowPath);
   const workflowDir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
 
-  setLogFilePath(`${workflowDir}/symphony.log`);
+  const logDir = ensureLogDir();
+  setLogFilePath(`${logDir}/symphony.log`);
 
   // Register built-in adapters (after log file is configured — these trigger logger.debug)
   await import("./adapters/tracker/feishu-bitable/register.ts");
@@ -63,11 +64,11 @@ async function main() {
   });
 
   const { TokenLog } = await import("./metrics/token-log.ts");
-  const tokenLogPath = resolvedPath.substring(0, resolvedPath.lastIndexOf("/")) + "/.symphony-tokens.jsonl";
+  const tokenLogPath = `${logDir}/.symphony-tokens.jsonl`;
   const tokenLog = new TokenLog(tokenLogPath);
 
   const { ExecutionLog } = await import("./logging/execution-log.ts");
-  const executionLogPath = resolvedPath.substring(0, resolvedPath.lastIndexOf("/")) + "/.symphony-execution.jsonl";
+  const executionLogPath = `${logDir}/.symphony-execution.jsonl`;
   const executionLog = new ExecutionLog(executionLogPath);
 
   // Create orchestrator

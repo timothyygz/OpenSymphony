@@ -31,8 +31,9 @@ import { mapRecordToIssue, type FieldMapping } from "../src/adapters/tracker/fei
 import type { TrackerAdapter } from "../src/adapters/tracker/types.ts";
 import type { Issue } from "../src/model/issue.ts";
 import { ExecutionLog, type ExecutionEvent } from "../src/logging/execution-log.ts";
+import { ensureLogDir } from "../src/logging/logger.ts";
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 
 const FEISHU_BASE = "https://open.feishu.cn";
 
@@ -121,7 +122,7 @@ function loadConfig(workflowPath?: string): {
     return records.map((r) => mapRecordToIssue(r, fieldMapping));
   };
 
-  const executionLogPath = join(dirname(path), ".symphony-execution.jsonl");
+  const executionLogPath = join(ensureLogDir(), ".symphony-execution.jsonl");
 
   return { config, adapter, listAllIssues, executionLogPath };
 }
