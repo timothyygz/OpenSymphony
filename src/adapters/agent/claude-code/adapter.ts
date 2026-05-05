@@ -19,6 +19,10 @@ import type {
 } from "../types.ts";
 import { logger } from "../../../logging/logger.ts";
 
+const DEFAULT_TURN_TIMEOUT_MS = 3_600_000;
+const LOG_PROMPT_MAX_LENGTH = 1000;
+const LOG_TEXT_MAX_LENGTH = 300;
+
 export interface ClaudeCodeConfig {
   command?: string;
   outputFormat?: string;
@@ -138,7 +142,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   constructor(config: ClaudeCodeConfig = {}) {
     this.command = config.command;
-    this.timeoutMs = config.timeoutMs ?? 3600000;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
     this.approvalPolicy = config.approvalPolicy;
   }
 
@@ -224,8 +228,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         sessionId: session.id,
         turn,
         prompt:
-          prompt.length > 1000
-            ? prompt.slice(0, 1000) + "...[truncated]"
+          prompt.length > LOG_PROMPT_MAX_LENGTH
+            ? prompt.slice(0, LOG_PROMPT_MAX_LENGTH) + "...[truncated]"
             : prompt,
         resume: session.turnCount > 0 && sessionId ? sessionId : undefined,
       },
@@ -263,8 +267,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
                 sessionId: msg.session_id,
                 turn,
                 text:
-                  text.length > 300
-                    ? text.slice(0, 300) + "...[truncated]"
+                  text.length > LOG_TEXT_MAX_LENGTH
+                    ? text.slice(0, LOG_TEXT_MAX_LENGTH) + "...[truncated]"
                     : text,
               },
               "Assistant text",
