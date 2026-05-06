@@ -11,6 +11,30 @@
 
 ### 安装
 
+**方式一：NPM 全局安装（推荐）**
+
+```bash
+# 使用 Bun
+bun add -g @timothyygz/open-symphony
+
+# 或使用 npm
+npm install -g @timothyygz/open-symphony
+```
+
+安装后可直接使用 `symphony` 命令：
+
+```bash
+symphony /path/to/WORKFLOW.md
+```
+
+也可以免安装直接运行：
+
+```bash
+bunx @timothyygz/open-symphony /path/to/WORKFLOW.md
+```
+
+**方式二：从源码安装**
+
 ```bash
 git clone https://github.com/timothyygz/OpenSymphony.git
 cd OpenSymphony
@@ -18,6 +42,16 @@ bun install
 ```
 
 ### 配置
+
+**推荐：使用交互式向导**
+
+```bash
+symphony init
+```
+
+向导会引导你完成：飞书凭据输入 → 自动建表 → Agent 配置 → 工作空间设置 → Prompt 模板选择 → 生成 `WORKFLOW.md`。2 分钟内完成。
+
+**手动配置**
 
 1. 复制示例配置并填写凭据：
 
@@ -49,20 +83,43 @@ cp WORKFLOW.md.example WORKFLOW.md
 ### 启动
 
 ```bash
-bun run start
+# NPM 全局安装后
+symphony /path/to/WORKFLOW.md
+
+# 或从源码运行
+bun run start /path/to/WORKFLOW.md
 ```
 
-默认以 TUI 仪表盘模式运行。在无终端环境下自动切换为 headless 模式（JSON 日志输出到 stdout）。
+若未指定配置文件路径，默认使用当前目录下的 `WORKFLOW.md`。默认以 TUI 仪表盘模式运行，在无终端环境下自动切换为 headless 模式（JSON 日志输出到 stdout）。
 
 ### CLI 用法
 
 ```
-symphony [选项] [WORKFLOW.md 路径]
+symphony <command> [选项] [路径]
+
+命令：
+  init [path]      交互式配置向导，生成 WORKFLOW.md
+  doctor [path]    系统诊断，检查配置和环境
 
 选项：
   --no-tui    以 headless 模式运行（JSON 日志输出到 stdout）
   -h, --help  显示帮助信息
+
+不带命令时，启动编排服务：
+  symphony [WORKFLOW.md 路径]
 ```
+
+### 系统诊断
+
+运行 `symphony doctor` 检查环境是否正常：
+
+- Claude CLI 可用性
+- WORKFLOW.md 存在性和解析
+- 配置校验
+- 飞书凭据连接
+- 多维表格访问
+- 工作空间目录可写性
+- Git 可用性（使用 git source 时）
 
 若未指定配置文件路径，默认使用当前目录下的 `WORKFLOW.md`。
 

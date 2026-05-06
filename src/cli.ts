@@ -1,18 +1,50 @@
 #!/usr/bin/env bun
-function parseArgs(args: string[]): { workflowPath?: string; noTui: boolean } {
+import { getCommand, getCommandNames } from "./commands/index.ts";
+
+const SUBCOMMANDS = new Set(["init", "doctor"]);
+
+function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string; noTui: boolean } {
   if (args.includes("--help") || args.includes("-h")) {
-    console.log("Usage: symphony [options] [path-to-WORKFLOW.md]");
-    console.log("  --no-tui    Run in headless mode (JSON logs to stdout)");
-    console.log("  --help, -h  Show this help");
+    console.log("Usage: symphony <command> [options] [path]");
+    console.log();
+    console.log("Commands:");
+    console.log("  init [path]        Interactive setup wizard");
+    console.log("  doctor [path]      System diagnostic");
+    console.log();
+    console.log("Options:");
+    console.log("  --no-tui           Run in headless mode (JSON logs to stdout)");
+    console.log("  --help, -h         Show this help");
+    console.log();
+    console.log("When no command is given, starts the orchestrator service.");
+    console.log("  symphony [path-to-WORKFLOW.md]");
     process.exit(0);
   }
   const noTui = args.includes("--no-tui");
   const positional = args.filter((a) => !a.startsWith("-"));
+  const first = positional[0];
+  if (first && SUBCOMMANDS.has(first)) {
+    return { subcommand: first, workflowPath: positional[1], noTui };
+  }
   return { workflowPath: positional[0], noTui };
 }
 
 async function main() {
-  const { workflowPath, noTui } = parseArgs(process.argv.slice(2));
+  const { subcommand, workflowPath, noTui } = parseArgs(process.argv.slice(2));
+
+  if (subcommand) {
+    // Import command modules to trigger registration
+    if (subcommand === "init") await import("./commands/init.ts");
+    if (subcommand === "doctor") await import("./commands/doctor.ts");
+
+    const handler = getCommand(subcommand);
+    if (!handler) {
+      console.error(`Unknown command: ${subcommand}`);
+      process.exit(1);
+    }
+    const cmdArgs = process.argv.slice(2).filter((a) => a !== subcommand);
+    await handler(cmdArgs);
+    return;
+  }
 
   const useTui = !noTui && process.stdout.isTTY && process.env.TERM !== "dumb";
   if (useTui) {
@@ -22,6 +54,7 @@ async function main() {
   const { Orchestrator } = await import("./orchestrator/orchestrator.ts");
   const { WorkflowWatcher } = await import("./workflow/watcher.ts");
   const { loadWorkflow, resolveWorkflowPath } = await import("./workflow/loader.ts");
+  const { MissingWorkflowFileError } = await import("./errors/errors.ts");
   const { buildServiceConfig, validateDispatchConfig } = await import("./workflow/config.ts");
   const { createTracker } = await import("./adapters/tracker/registry.ts");
   const { createAgent } = await import("./adapters/agent/registry.ts");
@@ -41,7 +74,19 @@ async function main() {
   logger.info({ path: resolvedPath }, "Starting Symphony service");
 
   // Initial load
-  const workflow = loadWorkflow(resolvedPath);
+  let workflow;
+  try {
+    workflow = loadWorkflow(resolvedPath);
+  } catch (err) {
+    if (err instanceof MissingWorkflowFileError) {
+      console.error(`Workflow file not found: ${resolvedPath}`);
+      console.error();
+      console.error("Run 'symphony init' to create one, or specify a path:");
+      console.error("  symphony /path/to/WORKFLOW.md");
+      process.exit(1);
+    }
+    throw err;
+  }
   const config = buildServiceConfig(workflow.config, workflowDir);
 
   // Validate
