@@ -1,0 +1,14 @@
+{"event":"worker_exit","timestamp":"2026-05-05T06:19:06.758Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","reason":"failed","turns":0,"totalTokens":0}
+{"event":"tracker_state_updated","timestamp":"2026-05-05T06:19:07.566Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","fromState":"待处理","toState":"待处理"}
+{"event":"worker_exit","timestamp":"2026-05-05T06:19:18.228Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","reason":"failed","turns":0,"totalTokens":0}
+{"event":"tracker_state_updated","timestamp":"2026-05-05T06:19:19.564Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","fromState":"进行中","toState":"待处理"}
+{"event":"worker_exit","timestamp":"2026-05-05T06:19:37.432Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","reason":"failed","turns":0,"totalTokens":0}
+{"event":"tracker_state_updated","timestamp":"2026-05-05T06:19:38.062Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","fromState":"待处理","toState":"待处理"}
+{"event":"worker_exit","timestamp":"2026-05-05T06:24:55.046Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","reason":"failed","turns":0,"totalTokens":0}
+{"event":"tracker_state_updated","timestamp":"2026-05-05T06:24:56.246Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","fromState":"进行中","toState":"待处理"}
+{"event":"worker_exit","timestamp":"2026-05-05T06:25:06.959Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","reason":"failed","turns":0,"totalTokens":0}
+{"event":"tracker_state_updated","timestamp":"2026-05-05T06:25:07.658Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","fromState":"待处理","toState":"待处理"}
+{"event":"worker_exit","timestamp":"2026-05-05T06:25:25.759Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","reason":"failed","turns":0,"totalTokens":0}
+{"event":"tracker_state_updated","timestamp":"2026-05-05T06:25:26.956Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","fromState":"进行中","toState":"待处理"}
+{"event":"worker_exit","timestamp":"2026-05-05T06:25:37.672Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","reason":"failed","turns":0,"totalTokens":0}
+{"event":"tracker_state_updated","timestamp":"2026-05-05T06:25:38.316Z","issueId":"recviIX1EkoJUJ","identifier":"SYMP-105","fromState":"待处理","toState":"待处理"}

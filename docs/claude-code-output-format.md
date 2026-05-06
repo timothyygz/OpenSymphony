@@ -171,7 +171,8 @@ Emitted for session lifecycle events (hooks, init, status).
 |-----------|-------------|------------|
 | `"hook_started"` | A hook started executing | `hook_id`, `hook_name`, `hook_event` |
 | `"hook_response"` | A hook completed | `hook_id`, `hook_name`, `output`, `stdout`, `stderr`, `exit_code`, `outcome` |
-| `"init"` | Session initialization | `cwd`, `session_id`, `tools`, `mcp_servers`, `model`, `permissionMode`, `plugins`, `skills`, `agents`, `apiKeySource`, `claude_code_version`, `memory_paths` |
+| `"init"` | Session initialization | `cwd`, `session_id`, `tools`, `
+servers`, `model`, `permissionMode`, `plugins`, `skills`, `agents`, `apiKeySource`, `claude_code_version`, `memory_paths` |
 | `"status"` | Status update | `status` (e.g., `"requesting"`) |
 
 ##### `init` Event Fields
