@@ -1,7 +1,7 @@
 import { enterAltScreen, exitAltScreen, drawLines } from "./renderer.ts";
 import { formatHeader, formatHistory, formatRunningTable, formatBackoffQueue } from "./layout.ts";
 import { Sparkline } from "./sparkline.ts";
-import { aggregate } from "../metrics/aggregator.ts";
+import type { TokenStore } from "../metrics/token-store.ts";
 import type { Orchestrator } from "../orchestrator/orchestrator.ts";
 import type { HistoryStats } from "../model/session.ts";
 
@@ -18,14 +18,14 @@ export class Dashboard {
   private lastRenderAt = 0;
   private readonly minIdleRerenderMs = 1000;
 
-  private readonly tokenLogPath: string;
+  private readonly tokenStore: TokenStore;
   private readonly trackerUrl: string | null;
   private cachedHistory: HistoryStats | null = null;
   private lastHistoryQueryAt = 0;
 
-  constructor(orchestrator: Orchestrator, tokenLogPath: string, trackerUrl?: string | null) {
+  constructor(orchestrator: Orchestrator, tokenStore: TokenStore, trackerUrl?: string | null) {
     this.orchestrator = orchestrator;
-    this.tokenLogPath = tokenLogPath;
+    this.tokenStore = tokenStore;
     this.trackerUrl = trackerUrl ?? null;
     this.refreshMs = parseInt(process.env.SYMPHONY_TUI_REFRESH_MS ?? "", 10) || DEFAULT_REFRESH_MS;
   }
@@ -57,7 +57,7 @@ export class Dashboard {
     exitAltScreen();
   }
 
-  private async render(): Promise<void> {
+  private render(): void {
     const now = Date.now();
     const state = this.orchestrator.getState();
     const fp = stateFingerprint(state);
@@ -69,7 +69,7 @@ export class Dashboard {
     this.lastFingerprint = fp;
     this.lastRenderAt = now;
 
-    const history = await this.getHistory(now);
+    const history = this.getHistory(now);
 
     const header = formatHeader(state, this.sparkline, now, this.trackerUrl);
     const historyLines = formatHistory(history);
@@ -88,12 +88,12 @@ export class Dashboard {
     drawLines(lines);
   }
 
-  private async getHistory(now: number): Promise<HistoryStats> {
+  private getHistory(now: number): HistoryStats {
     if (this.cachedHistory && now - this.lastHistoryQueryAt < HISTORY_REFRESH_MS) {
       return this.cachedHistory;
     }
 
-    this.cachedHistory = await aggregate(this.tokenLogPath);
+    this.cachedHistory = this.tokenStore.aggregate();
     this.lastHistoryQueryAt = now;
     return this.cachedHistory;
   }
