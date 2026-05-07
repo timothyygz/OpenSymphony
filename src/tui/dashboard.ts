@@ -19,12 +19,14 @@ export class Dashboard {
   private readonly minIdleRerenderMs = 1000;
 
   private readonly tokenLogPath: string;
+  private readonly trackerUrl: string | null;
   private cachedHistory: HistoryStats | null = null;
   private lastHistoryQueryAt = 0;
 
-  constructor(orchestrator: Orchestrator, tokenLogPath: string) {
+  constructor(orchestrator: Orchestrator, tokenLogPath: string, trackerUrl?: string | null) {
     this.orchestrator = orchestrator;
     this.tokenLogPath = tokenLogPath;
+    this.trackerUrl = trackerUrl ?? null;
     this.refreshMs = parseInt(process.env.SYMPHONY_TUI_REFRESH_MS ?? "", 10) || DEFAULT_REFRESH_MS;
   }
 
@@ -69,7 +71,7 @@ export class Dashboard {
 
     const history = await this.getHistory(now);
 
-    const header = formatHeader(state, this.sparkline, now);
+    const header = formatHeader(state, this.sparkline, now, this.trackerUrl);
     const historyLines = formatHistory(history);
     const table = formatRunningTable(state);
     const backoff = formatBackoffQueue(state);

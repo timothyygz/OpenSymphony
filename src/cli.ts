@@ -131,7 +131,10 @@ async function main() {
   let dashboard: { start(): void; stop(): void } | null = null;
   if (useTui) {
     const { Dashboard } = await import("./tui/dashboard.ts");
-    dashboard = new Dashboard(orchestrator, tokenLogPath);
+    const trackerUrl = config.tracker.kind === "feishu_bitable" && config.tracker.app_token && config.tracker.table_id
+      ? `https://mbyzmxekdm.feishu.cn/base/${config.tracker.app_token}?table=${config.tracker.table_id}`
+      : null;
+    dashboard = new Dashboard(orchestrator, tokenLogPath, trackerUrl);
   }
 
   // Start workflow watcher

@@ -26,6 +26,7 @@ export function formatHeader(
   state: OrchestratorState,
   sparkline: Sparkline,
   now: number,
+  trackerUrl?: string | null,
 ): string[] {
   const agentCount = state.running.size;
   const maxAgents = state.maxConcurrentAgents;
@@ -67,6 +68,9 @@ export function formatHeader(
       colorize(`total ${formatCount(totals.totalTokens)}`, ANSI.yellow),
     colorize("│ Rate Limits: ", ANSI.bold) + colorize(formatRateLimits(state.rateLimits), ANSI.cyan),
     colorize("│ Next refresh: ", ANSI.bold) + nextRefresh,
+    ...(trackerUrl
+      ? [colorize("│ Tracker: ", ANSI.bold) + colorize(trackerUrl, ANSI.cyan)]
+      : []),
   ];
 }
 
