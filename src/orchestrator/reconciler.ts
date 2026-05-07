@@ -36,14 +36,7 @@ export class Reconciler {
           { event: "stall_detected", issueId, identifier: entry.identifier, elapsed, timeout: stallTimeoutMs },
           "Stall detected",
         );
-        logger.info(
-          { event: "worker_exit", issueId, identifier: entry.identifier, reason: "stall", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
-          "Worker exiting due to stall",
-        );
-        this.deps.state.running.delete(issueId);
-        addRuntimeSeconds(this.deps.state, entry);
-        this.finalizeWorkerTokens(entry);
-        this.deps.state.claimed.delete(issueId);
+        this.terminateWorker(issueId, entry, "stall");
         logger.info(
           { event: "retry_scheduled", issueId, identifier: entry.identifier, attempt: entry.retryAttempt + 1, backoffMs: this.deps.config.agent.max_retry_backoff_ms, reason: "stall detected" },
           "Retry scheduled after stall",
@@ -88,14 +81,7 @@ export class Reconciler {
           { issueId: issue.id, state: issue.state },
           "Issue is terminal, terminating worker",
         );
-        logger.info(
-          { event: "worker_exit", issueId: issue.id, identifier: entry.identifier, reason: "normal", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
-          "Worker exiting normally",
-        );
-        this.deps.state.running.delete(issue.id);
-        addRuntimeSeconds(this.deps.state, entry);
-        this.finalizeWorkerTokens(entry);
-        this.deps.state.claimed.delete(issue.id);
+        this.terminateWorker(issue.id, entry, "normal");
         this.deps.workspaceManager
           .cleanupWorkspace(issue.identifier)
           .catch(() => {});
@@ -108,14 +94,7 @@ export class Reconciler {
           { issueId: issue.id, state: issue.state },
           "Issue is non-active, stopping worker",
         );
-        logger.info(
-          { event: "worker_exit", issueId: issue.id, identifier: entry.identifier, reason: "external_cancel", turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
-          "Worker exiting due to external cancel",
-        );
-        this.deps.state.running.delete(issue.id);
-        addRuntimeSeconds(this.deps.state, entry);
-        this.finalizeWorkerTokens(entry);
-        this.deps.state.claimed.delete(issue.id);
+        this.terminateWorker(issue.id, entry, "external_cancel");
       }
     }
   }
@@ -134,6 +113,17 @@ export class Reconciler {
     } catch (err) {
       logger.warn({ error: String(err) }, "Startup cleanup failed, continuing");
     }
+  }
+
+  private terminateWorker(issueId: string, entry: RunningEntry, reason: string): void {
+    logger.info(
+      { event: "worker_exit", issueId, identifier: entry.identifier, reason, turns: entry.turnCount, totalTokens: entry.tokenUsage.totalTokens },
+      `Worker exiting due to ${reason}`,
+    );
+    this.deps.state.running.delete(issueId);
+    addRuntimeSeconds(this.deps.state, entry);
+    this.finalizeWorkerTokens(entry);
+    this.deps.state.claimed.delete(issueId);
   }
 
   finalizeWorkerTokens(entry: RunningEntry): void {

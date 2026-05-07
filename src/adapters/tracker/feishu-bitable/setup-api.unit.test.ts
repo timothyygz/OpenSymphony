@@ -172,7 +172,7 @@ test("lookupUserByMobile throws on API error", async () => {
   const auth = new FeishuAuth("app123", "secret123");
   const api = new FeishuBitableSetupApi(auth);
 
-  expect(api.lookupUserByMobile("13800138000")).rejects.toThrow("Lookup user error");
+  expect(api.lookupUserByMobile("13800138000")).rejects.toThrow("Feishu API error");
 
   globalThis.fetch = originalFetch;
 });
@@ -210,7 +210,7 @@ test("transferOwnership throws on permission denied", async () => {
   const auth = new FeishuAuth("app123", "secret123");
   const api = new FeishuBitableSetupApi(auth);
 
-  expect(api.transferOwnership("btoken", "ou_abc123")).rejects.toThrow("Transfer ownership error");
+  expect(api.transferOwnership("btoken", "ou_abc123")).rejects.toThrow("Feishu API error");
 
   globalThis.fetch = originalFetch;
 });

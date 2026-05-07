@@ -1,5 +1,6 @@
 import type { Issue } from "../model/index.ts";
 import type { OrchestratorState } from "./state.ts";
+import { normalizeState } from "./state.ts";
 
 export function sortForDispatch(issues: Issue[]): Issue[] {
   return [...issues].sort((a, b) => {
@@ -29,7 +30,7 @@ export function canDispatch(
   if (!issue.id || !issue.identifier || !issue.title || !issue.state) return false;
 
   // Must be in active states
-  if (!activeStates.some((s) => s.trim() === issue.state.trim())) return false;
+  if (!activeStates.some((s) => normalizeState(s) === normalizeState(issue.state))) return false;
 
   // Not already running or claimed
   if (state.running.has(issue.id)) return false;
@@ -39,11 +40,11 @@ export function canDispatch(
   if (state.running.size >= maxConcurrentAgents) return false;
 
   // Per-state concurrency
-  const normalizedState = issue.state.trim();
+  const normalizedState = normalizeState(issue.state);
   const stateLimit = maxConcurrentAgentsByState.get(normalizedState);
   if (stateLimit !== undefined) {
     const runningInState = [...state.running.values()]
-      .filter((r) => r.issue.state.trim() === normalizedState).length;
+      .filter((r) => normalizeState(r.issue.state) === normalizedState).length;
     if (runningInState >= stateLimit) return false;
   }
 

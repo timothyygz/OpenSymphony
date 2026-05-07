@@ -15,26 +15,18 @@ const EVENT_MAP: Record<string, EventMapping> = {
   message:              { text: "text output",          color: "gray" },
 };
 
-const DOT_COLORS: Record<string, string> = {
-  system:               "gray",
-  assistant:            "blue",
-  content_block_start:  "green",
-  content_block_delta:  "cyan",
-  content_block_stop:   "green",
-  result:               "magenta",
-  tool_use:             "yellow",
-  tool_result:          "cyan",
-  message:              "gray",
-};
+const DEFAULT_EVENT: EventMapping = { text: "none", color: "red" };
+const UNKNOWN_EVENT: EventMapping = { text: "", color: "yellow" };
 
 export function humanizeEvent(eventName: string | null): EventMapping {
-  if (!eventName) return { text: "none", color: "red" };
-  return EVENT_MAP[eventName] ?? { text: eventName, color: "yellow" };
+  if (!eventName) return DEFAULT_EVENT;
+  const mapping = EVENT_MAP[eventName];
+  if (!mapping) return { ...UNKNOWN_EVENT, text: eventName };
+  return mapping;
 }
 
 export function dotColor(eventName: string | null): string {
-  if (!eventName) return "red";
-  return DOT_COLORS[eventName] ?? "yellow";
+  return humanizeEvent(eventName).color;
 }
 
 export function formatRateLimits(rateLimits: unknown): string {
