@@ -335,12 +335,7 @@ export async function stepWorkspace(
   });
   if (p.isCancel(sourceType)) return null;
 
-  const root = await p.text({
-    message: "Workspace root directory",
-    defaultValue: "~/.open-symphony/workspace",
-  });
-  if (p.isCancel(root)) return null;
-
+  const root = "~/.open-symphony/workspace";
   const config: Record<string, unknown> = { root };
 
   if (sourceType === "none") {
@@ -348,8 +343,18 @@ export async function stepWorkspace(
   }
 
   if (sourceType === "git-worktree") {
+    const repo = await p.text({
+      message: "Git repository path (must be an existing git repo)",
+      placeholder: "~/Workspace/my-project",
+    });
+    if (p.isCancel(repo)) return null;
+    const clonePath = await p.text({
+      message: "Clone path name in workspace",
+      defaultValue: "repo",
+    });
+    if (p.isCancel(clonePath)) return null;
     config.sources = [
-      { type: "git-worktree", repo: root as string, path: "/" },
+      { type: "git-worktree", repo: repo as string, path: clonePath },
     ];
   } else if (sourceType === "git-clone") {
     const url = await p.text({

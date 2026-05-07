@@ -167,7 +167,7 @@ describe("stepAgent", () => {
 describe("stepWorkspace", () => {
   test("none type", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("none", "~/.open-symphony/workspace");
+    enqueue("none");
 
     const result = await stepWorkspace(deps);
     expect(result).not.toBeNull();
@@ -177,16 +177,16 @@ describe("stepWorkspace", () => {
 
   test("git-worktree type", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("git-worktree", "~/.open-symphony/workspace");
+    enqueue("git-worktree", "~/Workspace/my-project", "repo");
 
     const result = await stepWorkspace(deps);
     expect(result).not.toBeNull();
-    expect(result!.sources).toEqual([{ type: "git-worktree", repo: "~/.open-symphony/workspace", path: "/" }]);
+    expect(result!.sources).toEqual([{ type: "git-worktree", repo: "~/Workspace/my-project", path: "repo" }]);
   });
 
   test("git-clone type", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("git-clone", "~/.open-symphony/workspace", "git@github.com:org/repo.git", "repo", "main");
+    enqueue("git-clone", "git@github.com:org/repo.git", "repo", "main");
 
     const result = await stepWorkspace(deps);
     expect(result).not.toBeNull();
@@ -195,7 +195,7 @@ describe("stepWorkspace", () => {
 
   test("git-clone without branch", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("git-clone", "~/.open-symphony/workspace", "git@github.com:org/repo.git", "repo", "");
+    enqueue("git-clone", "git@github.com:org/repo.git", "repo", "");
 
     const result = await stepWorkspace(deps);
     expect(result).not.toBeNull();
@@ -210,17 +210,9 @@ describe("stepWorkspace", () => {
     expect(result).toBeNull();
   });
 
-  test("returns null on cancel at root", async () => {
-    const { deps, enqueue } = createMockDeps();
-    enqueue("none", CANCEL);
-
-    const result = await stepWorkspace(deps);
-    expect(result).toBeNull();
-  });
-
   test("returns null on cancel at git-clone url", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("git-clone", "~/.open-symphony/workspace", CANCEL);
+    enqueue("git-clone", CANCEL);
 
     const result = await stepWorkspace(deps);
     expect(result).toBeNull();
