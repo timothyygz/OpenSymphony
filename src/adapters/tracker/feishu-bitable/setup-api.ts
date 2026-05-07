@@ -18,6 +18,16 @@ export interface CreateTableResult {
   table_id: string;
 }
 
+export interface TableInfo {
+  table_id: string;
+  name: string;
+}
+
+export interface FieldInfo {
+  field_name: string;
+  type: number;
+}
+
 export interface FieldDefinition {
   field_name: string;
   type: number;
@@ -25,7 +35,7 @@ export interface FieldDefinition {
   property?: Record<string, unknown>;
 }
 
-const STANDARD_FIELDS: FieldDefinition[] = [
+export const STANDARD_FIELDS: FieldDefinition[] = [
   { field_name: "标题", type: 1 },
   { field_name: "编号", type: 1005, property: { auto_serial: { type: "auto_increment_number" } } },
   {
@@ -145,5 +155,23 @@ export class FeishuBitableSetupApi {
       `${FEISHU_BASE}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}`,
       { method: "DELETE" },
     );
+  }
+
+  async listTables(appToken: string): Promise<TableInfo[]> {
+    const data = await feishuRequest<ApiResponse>(
+      this.auth,
+      `${FEISHU_BASE}/open-apis/bitable/v1/apps/${appToken}/tables`,
+    );
+    const items = data.data.items as Array<{ table_id: string; name: string }> | undefined;
+    return items ?? [];
+  }
+
+  async listFields(appToken: string, tableId: string): Promise<FieldInfo[]> {
+    const data = await feishuRequest<ApiResponse>(
+      this.auth,
+      `${FEISHU_BASE}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
+    );
+    const items = data.data.items as Array<{ field_name: string; type: number }> | undefined;
+    return items ?? [];
   }
 }

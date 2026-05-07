@@ -19,6 +19,8 @@ function createMockSetupApi(overrides: Partial<SetupApi> = {}): SetupApi {
     deleteTable: overrides.deleteTable ?? (async () => {}),
     lookupUserByMobile: overrides.lookupUserByMobile ?? (async () => "ou_test_user"),
     transferOwnership: overrides.transferOwnership ?? (async () => {}),
+    listTables: overrides.listTables ?? (async () => []),
+    listFields: overrides.listFields ?? (async () => []),
   };
 }
 
@@ -50,6 +52,8 @@ function happyPathAnswers(overrides: Partial<{
   return [
     // stepTracker group: appId, appSecret
     "cli_test_app", "test_secret",
+    // mode selection: "new"
+    "new",
     // phone (empty = skip transfer)
     overrides.phone ?? "",
     // stepAgent: approvalPolicy
@@ -110,8 +114,8 @@ describe("initCommand full flow", () => {
 
   test("cancel at agent step — no file written", async () => {
     const { deps, enqueue } = createFlowDeps(tempDir);
-    // stepTracker answers + cancel at agent
-    enqueue("cli_app", "secret", "", CANCEL);
+    // stepTracker answers (with mode "new") + cancel at agent
+    enqueue("cli_app", "secret", "new", "", CANCEL);
 
     await initCommand([tempDir], deps);
 
