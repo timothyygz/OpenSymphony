@@ -1,14 +1,14 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { FeishuBitableApi } from "../../tracker/feishu-bitable/api.ts";
+import type { TrackerAdapter } from "../../tracker/types.ts";
 
-export function createBitableTool(api: FeishuBitableApi, issueId: string) {
+export function createTrackerTool(adapter: TrackerAdapter, issueId: string) {
   return tool(
     "tracker_tool",
     "Interact with the tracker to create, read, update and search task records. " +
       "Use this to report progress, write result summaries, update task state, and create new tasks. " +
       "Actions: 'create' creates a new record, 'get' retrieves a single record, " +
-      "'update' modifies record fields, 'list' returns all records, 'search' filters records by conditions.",
+      "'update' modifies record fields, 'list' returns all records, 'search' filters records by keyword.",
     {
       action: z
         .enum(["create", "get", "update", "list", "search"])
@@ -25,11 +25,11 @@ export function createBitableTool(api: FeishuBitableApi, issueId: string) {
         .describe(
           "Fields for the record (key-value pairs). Used with 'create' and 'update' actions.",
         ),
-      filter: z
-        .record(z.unknown())
+      query: z
+        .string()
         .optional()
         .describe(
-          "Filter conditions for 'search' action (Feishu Bitable filter object).",
+          "Search query string for 'search' action.",
         ),
     },
     async (args) => {
@@ -38,31 +38,37 @@ export function createBitableTool(api: FeishuBitableApi, issueId: string) {
 
         switch (args.action) {
           case "create": {
-            if (!args.fields || Object.keys(args.fields).length === 0) {
+            const title = (args.fields?.title as string) ?? "";
+            if (!title) {
               return {
                 content: [
                   {
                     type: "text" as const,
-                    text: "No fields provided to create record",
+                    text: "No title provided to create record",
                   },
                 ],
                 isError: true,
               };
             }
-            const record = await api.createRecord(args.fields);
+            const issue = await adapter.createIssue({
+              title,
+              description: args.fields?.description as string | undefined,
+              state: args.fields?.state as string | undefined,
+              labels: args.fields?.labels as string[] | undefined,
+            });
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: JSON.stringify(record, null, 2),
+                  text: JSON.stringify(issue, null, 2),
                 },
               ],
             };
           }
           case "get": {
-            const records = await api.listRecords();
-            const record = records.find((r) => r.record_id === recordId);
-            if (!record) {
+            const issues = await adapter.fetchIssueStatesByIds([recordId]);
+            const issue = issues[0];
+            if (!issue) {
               return {
                 content: [
                   {
@@ -77,7 +83,7 @@ export function createBitableTool(api: FeishuBitableApi, issueId: string) {
               content: [
                 {
                   type: "text" as const,
-                  text: JSON.stringify(record, null, 2),
+                  text: JSON.stringify(issue, null, 2),
                 },
               ],
             };
@@ -94,7 +100,15 @@ export function createBitableTool(api: FeishuBitableApi, issueId: string) {
                 isError: true,
               };
             }
-            await api.updateRecord(recordId, args.fields);
+            if (args.fields.state) {
+              await adapter.updateIssueState(recordId, args.fields.state as string);
+            }
+            if (args.fields.progress && adapter.updateIssueProgress) {
+              await adapter.updateIssueProgress(recordId, args.fields.progress as string);
+            }
+            if (args.fields.result_summary && adapter.updateIssueResultSummary) {
+              await adapter.updateIssueResultSummary(recordId, args.fields.result_summary as string);
+            }
             return {
               content: [
                 {
@@ -105,34 +119,34 @@ export function createBitableTool(api: FeishuBitableApi, issueId: string) {
             };
           }
           case "list": {
-            const records = await api.listRecords();
+            const issues = await adapter.fetchIssuesByStates(["*"]);
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: JSON.stringify(records, null, 2),
+                  text: JSON.stringify(issues, null, 2),
                 },
               ],
             };
           }
           case "search": {
-            if (!args.filter) {
+            if (!args.query) {
               return {
                 content: [
                   {
                     type: "text" as const,
-                    text: "Filter is required for search action",
+                    text: "Query is required for search action",
                   },
                 ],
                 isError: true,
               };
             }
-            const records = await api.searchRecords(args.filter);
+            const issues = await adapter.searchIssues(args.query);
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: JSON.stringify(records, null, 2),
+                  text: JSON.stringify(issues, null, 2),
                 },
               ],
             };
@@ -141,7 +155,7 @@ export function createBitableTool(api: FeishuBitableApi, issueId: string) {
       } catch (err) {
         return {
           content: [
-            { type: "text" as const, text: `Bitable operation failed: ${err}` },
+            { type: "text" as const, text: `Tracker operation failed: ${err}` },
           ],
           isError: true,
         };
@@ -150,10 +164,10 @@ export function createBitableTool(api: FeishuBitableApi, issueId: string) {
   );
 }
 
-export function createTrackerMcpServer(api: FeishuBitableApi, issueId: string) {
+export function createTrackerMcpServer(adapter: TrackerAdapter, issueId: string) {
   return createSdkMcpServer({
     name: "tracker",
     alwaysLoad: true,
-    tools: [createBitableTool(api, issueId)],
+    tools: [createTrackerTool(adapter, issueId)],
   });
 }

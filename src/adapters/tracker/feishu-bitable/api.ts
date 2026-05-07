@@ -55,11 +55,17 @@ export async function feishuRequest<T extends ApiResponse>(
 }
 
 export class FeishuBitableApi {
+  readonly appToken: string;
+  readonly tableId: string;
+
   constructor(
     private readonly auth: FeishuAuth,
-    private readonly appToken: string,
-    private readonly tableId: string,
-  ) {}
+    appToken: string,
+    tableId: string,
+  ) {
+    this.appToken = appToken;
+    this.tableId = tableId;
+  }
 
   async listRecords(pageSize = 50): Promise<BitableRecord[]> {
     const records: BitableRecord[] = [];

@@ -61,6 +61,20 @@ class MockTracker implements TrackerAdapter {
   async fetchIssueStatesByIds(ids: string[]): Promise<Issue[]> {
     return this.issues.filter((i) => ids.includes(i.id));
   }
+
+  getMcpServerConfig() {
+    return {};
+  }
+
+  async createIssue(data: import("../../src/adapters/tracker/types.ts").CreateIssueData): Promise<Issue> {
+    const issue: Issue = { id: `mock-${Date.now()}`, identifier: `MOCK-${this.issues.length + 1}`, title: data.title, state: data.state ?? "Todo", description: data.description ?? null, priority: null, branchName: null, url: null, labels: [], blockedBy: [], createdAt: null, updatedAt: null };
+    this.issues.push(issue);
+    return issue;
+  }
+
+  async searchIssues(): Promise<Issue[]> {
+    return this.issues;
+  }
 }
 
 class MockAgent implements AgentAdapter {

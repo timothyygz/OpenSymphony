@@ -1,4 +1,4 @@
-import type { TrackerAdapter } from "../types.ts";
+import type { TrackerAdapter, CreateIssueData, HealthCheckResult } from "../types.ts";
 import type { Issue, TokenUsage } from "../../../model/index.ts";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { FeishuAuth } from "./auth.ts";
@@ -74,6 +74,10 @@ export class FeishuBitableAdapter implements TrackerAdapter {
 
   async fetchIssuesByStates(states: string[]): Promise<Issue[]> {
     if (states.length === 0) return [];
+    if (states.length === 1 && states[0] === "*") {
+      const records = await this.api.listRecords();
+      return records.map((r) => mapRecordToIssue(r, this.fieldMapping));
+    }
 
     const filter = {
       conjunction: "or" as const,
@@ -129,8 +133,62 @@ export class FeishuBitableAdapter implements TrackerAdapter {
   }
 
   getMcpServerConfig(issueId: string): Record<string, McpServerConfig> {
-    const trackerMcpServer = createTrackerMcpServer(this.api, issueId);
+    const trackerMcpServer = createTrackerMcpServer(this, issueId);
     return { tracker: trackerMcpServer };
+  }
+
+  async createIssue(data: CreateIssueData): Promise<Issue> {
+    const fields: Record<string, unknown> = {
+      [this.fieldMapping.titleField]: data.title,
+    };
+    if (data.description) {
+      fields[this.fieldMapping.descriptionField] = data.description;
+    }
+    if (data.state) {
+      fields[this.fieldMapping.stateField] = data.state;
+    }
+    const record = await this.api.createRecord(fields);
+    return mapRecordToIssue(record, this.fieldMapping);
+  }
+
+  async searchIssues(query: string): Promise<Issue[]> {
+    const filter = {
+      conjunction: "and" as const,
+      conditions: [
+        {
+          field_name: this.fieldMapping.titleField,
+          operator: "contains",
+          value: [query],
+        },
+      ],
+    };
+    const records = await this.api.searchRecords(filter);
+    return records.map((r) => mapRecordToIssue(r, this.fieldMapping));
+  }
+
+  async healthCheck(): Promise<HealthCheckResult[]> {
+    const results: HealthCheckResult[] = [];
+
+    try {
+      await this.auth.getAccessToken();
+      results.push({ name: "Feishu auth", status: "pass", message: "Credentials valid" });
+    } catch (err) {
+      results.push({ name: "Feishu auth", status: "fail", message: err instanceof Error ? err.message : String(err) });
+      return results;
+    }
+
+    try {
+      await this.api.listRecords(1);
+      results.push({ name: "Bitable access", status: "pass", message: "Table accessible" });
+    } catch (err) {
+      results.push({ name: "Bitable access", status: "fail", message: err instanceof Error ? err.message : String(err) });
+    }
+
+    return results;
+  }
+
+  getDashboardUrl(): string | null {
+    return `https://mbyzmxekdm.feishu.cn/base/${this.api.appToken}?table=${this.api.tableId}`;
   }
 }
 

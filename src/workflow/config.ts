@@ -7,16 +7,13 @@ import { logger } from "../logging/logger.ts";
 
 interface GlobalSettings {
   tracker?: {
-    feishu?: {
-      app_id?: string;
-      app_secret?: string;
-      app_token?: string;
-      table_id?: string;
-    };
+    [kind: string]: Record<string, unknown>;
   };
 }
 
 let _cachedSettings: GlobalSettings | null = null;
+
+const emptySettings: GlobalSettings = {};
 
 export function resetGlobalSettingsCache(): void {
   _cachedSettings = null;
@@ -27,7 +24,7 @@ function loadGlobalSettings(): GlobalSettings {
   const settingsPath = process.env.SYMPHONY_SETTINGS_PATH
     ?? resolve(homedir(), ".open-symphony", "settings.json");
   if (!existsSync(settingsPath)) {
-    _cachedSettings = {};
+    _cachedSettings = emptySettings;
     return _cachedSettings;
   }
   try {
@@ -35,9 +32,9 @@ function loadGlobalSettings(): GlobalSettings {
     logger.debug({ path: settingsPath }, "Loaded global settings");
   } catch (err) {
     logger.warn({ err, path: settingsPath }, "Failed to load global settings");
-    _cachedSettings = {};
+    _cachedSettings = emptySettings;
   }
-  return _cachedSettings;
+  return _cachedSettings!;
 }
 
 export function resolveEnvValue(value: unknown): unknown {
@@ -100,10 +97,12 @@ export function buildServiceConfig(
 
     // Merge global settings as defaults for missing credential fields
     const globals = loadGlobalSettings();
-    if (tracker.kind === "feishu_bitable" && globals.tracker?.feishu) {
-      for (const key of ["app_id", "app_secret", "app_token", "table_id"] as const) {
-        if (tracker[key] === undefined && globals.tracker.feishu[key] !== undefined) {
-          tracker[key] = globals.tracker.feishu[key];
+    const kind = tracker.kind as string;
+    if (kind && globals.tracker?.[kind]) {
+      const kindDefaults = globals.tracker[kind]!;
+      for (const [key, value] of Object.entries(kindDefaults)) {
+        if (tracker[key] === undefined && value !== undefined) {
+          tracker[key] = value;
         }
       }
     }
@@ -116,6 +115,9 @@ export function buildServiceConfig(
     }
     if (typeof tracker.app_secret === "string") {
       tracker.app_secret = resolveEnvValue(tracker.app_secret) as string | undefined;
+    }
+    if (typeof tracker.gitlab_token === "string") {
+      tracker.gitlab_token = resolveEnvValue(tracker.gitlab_token) as string | undefined;
     }
   }
 
@@ -158,6 +160,11 @@ export function validateDispatchConfig(config: ServiceConfig): string | null {
   if (config.tracker.kind === "linear") {
     if (!config.tracker.api_key) return "tracker.api_key ($LINEAR_API_KEY) is required";
     if (!config.tracker.project_slug) return "tracker.project_slug is required for linear";
+  }
+  if (config.tracker.kind === "gitlab_issues") {
+    if (!config.tracker.gitlab_host) return "tracker.gitlab_host is required for gitlab_issues";
+    if (!config.tracker.gitlab_token) return "tracker.gitlab_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITLAB_TOKEN)";
+    if (!config.tracker.project_id) return "tracker.project_id is required for gitlab_issues";
   }
   // Check agent kind is specified
   if (!config.agent.kind) return "agent.kind is required";

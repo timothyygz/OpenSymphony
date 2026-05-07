@@ -53,7 +53,7 @@ describe("Global settings from ~/.open-symphony/settings.json", () => {
   test("fills missing credentials from settings.json", () => {
     writeTestSettings({
       tracker: {
-        feishu: {
+        feishu_bitable: {
           app_id: "cli_from_settings",
           app_secret: "secret_from_settings",
           app_token: "token_from_settings",
@@ -74,7 +74,7 @@ describe("Global settings from ~/.open-symphony/settings.json", () => {
   test("WORKFLOW.md explicit values take priority over settings.json", () => {
     writeTestSettings({
       tracker: {
-        feishu: {
+        feishu_bitable: {
           app_id: "cli_from_settings",
           app_secret: "secret_from_settings",
         },
@@ -118,7 +118,7 @@ describe("Global settings from ~/.open-symphony/settings.json", () => {
   test("partial settings.json only fills specified fields", () => {
     writeTestSettings({
       tracker: {
-        feishu: {
+        feishu_bitable: {
           app_id: "cli_from_settings",
           app_secret: "secret_from_settings",
         },

@@ -2,11 +2,10 @@ import * as p from "@clack/prompts";
 import { existsSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { registerCommand } from "./index.ts";
-import { FeishuAuth } from "../adapters/tracker/feishu-bitable/auth.ts";
-import { FeishuBitableSetupApi } from "../adapters/tracker/feishu-bitable/setup-api.ts";
-import { FeishuBitableApi } from "../adapters/tracker/feishu-bitable/api.ts";
 import { loadWorkflow, resolveWorkflowPath } from "../workflow/loader.ts";
 import { buildServiceConfig, validateDispatchConfig } from "../workflow/config.ts";
+import { createTracker } from "../adapters/tracker/registry.ts";
+import type { HealthCheckResult } from "../adapters/tracker/types.ts";
 
 interface CheckResult {
   name: string;
@@ -51,37 +50,30 @@ function checkConfigValidation(config: ReturnType<typeof buildServiceConfig>): C
   return { name: "Config validation", pass: true, message: "All required fields present" };
 }
 
-async function checkFeishuAuth(config: ReturnType<typeof buildServiceConfig>): Promise<CheckResult> {
-  if (config.tracker.kind !== "feishu_bitable") {
-    return { name: "Feishu auth", pass: true, message: "Skipped (not feishu_bitable)" };
-  }
-  if (!config.tracker.app_id || !config.tracker.app_secret) {
-    return { name: "Feishu auth", pass: false, message: "Missing app_id or app_secret" };
-  }
-  try {
-    const auth = new FeishuAuth(config.tracker.app_id, config.tracker.app_secret);
-    const setupApi = new FeishuBitableSetupApi(auth);
-    await setupApi.testConnection();
-    return { name: "Feishu auth", pass: true, message: "Credentials valid" };
-  } catch (err) {
-    return { name: "Feishu auth", pass: false, message: `${err instanceof Error ? err.message : String(err)}` };
-  }
-}
+async function checkTrackerHealth(config: ReturnType<typeof buildServiceConfig>): Promise<CheckResult[]> {
+  // Ensure adapters are registered
+  await import("../adapters/tracker/feishu-bitable/register.ts");
+  await import("../adapters/tracker/gitlab-issues/register.ts");
 
-async function checkBitableAccess(config: ReturnType<typeof buildServiceConfig>): Promise<CheckResult> {
-  if (config.tracker.kind !== "feishu_bitable") {
-    return { name: "Bitable access", pass: true, message: "Skipped (not feishu_bitable)" };
-  }
-  if (!config.tracker.app_id || !config.tracker.app_secret || !config.tracker.app_token || !config.tracker.table_id) {
-    return { name: "Bitable access", pass: false, message: "Missing app_token or table_id" };
-  }
   try {
-    const auth = new FeishuAuth(config.tracker.app_id, config.tracker.app_secret);
-    const api = new FeishuBitableApi(auth, config.tracker.app_token, config.tracker.table_id);
-    await api.listRecords(1);
-    return { name: "Bitable access", pass: true, message: "Table accessible" };
+    const tracker = createTracker(config.tracker.kind, config.tracker as unknown as Record<string, unknown>);
+
+    if (!tracker.healthCheck) {
+      return [{ name: "Tracker health", pass: true, message: "Health check skipped (not supported)" }];
+    }
+
+    const results: CheckResult[] = [];
+    const healthResults: HealthCheckResult[] = await tracker.healthCheck();
+    for (const hr of healthResults) {
+      results.push({
+        name: hr.name,
+        pass: hr.status === "pass",
+        message: hr.message ?? "",
+      });
+    }
+    return results;
   } catch (err) {
-    return { name: "Bitable access", pass: false, message: `${err instanceof Error ? err.message : String(err)}` };
+    return [{ name: "Tracker health", pass: false, message: err instanceof Error ? err.message : String(err) }];
   }
 }
 
@@ -145,22 +137,19 @@ async function doctorCommand(args: string[]): Promise<void> {
     results.push(validationCheck);
     validationCheck.pass ? p.log.success(`${validationCheck.name}: ${validationCheck.message}`) : p.log.error(`${validationCheck.name}: ${validationCheck.message}`);
 
-    // Check 4: Feishu auth
-    const feishuCheck = await checkFeishuAuth(config);
-    results.push(feishuCheck);
-    feishuCheck.pass ? p.log.success(`${feishuCheck.name}: ${feishuCheck.message}`) : p.log.error(`${feishuCheck.name}: ${feishuCheck.message}`);
+    // Check 4: Tracker health
+    const healthChecks = await checkTrackerHealth(config);
+    for (const hc of healthChecks) {
+      results.push(hc);
+      hc.pass ? p.log.success(`${hc.name}: ${hc.message}`) : p.log.error(`${hc.name}: ${hc.message}`);
+    }
 
-    // Check 5: Bitable access
-    const bitableCheck = await checkBitableAccess(config);
-    results.push(bitableCheck);
-    bitableCheck.pass ? p.log.success(`${bitableCheck.name}: ${bitableCheck.message}`) : p.log.error(`${bitableCheck.name}: ${bitableCheck.message}`);
-
-    // Check 6: Workspace writable
+    // Check 5: Workspace writable
     const workspaceCheck = checkWorkspaceWritable(config);
     results.push(workspaceCheck);
     workspaceCheck.pass ? p.log.success(`${workspaceCheck.name}: ${workspaceCheck.message}`) : p.log.error(`${workspaceCheck.name}: ${workspaceCheck.message}`);
 
-    // Check 7: Git
+    // Check 6: Git
     const gitCheck = await checkGit(config);
     results.push(gitCheck);
     gitCheck.pass ? p.log.success(`${gitCheck.name}: ${gitCheck.message}`) : p.log.error(`${gitCheck.name}: ${gitCheck.message}`);

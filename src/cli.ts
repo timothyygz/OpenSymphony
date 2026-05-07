@@ -127,6 +127,7 @@ async function main() {
 
   // Register built-in adapters (after log file is configured — these trigger logger.debug)
   await import("./adapters/tracker/feishu-bitable/register.ts");
+  await import("./adapters/tracker/gitlab-issues/register.ts");
   await import("./adapters/agent/claude-code/register.ts");
 
   logger.info({ path: resolvedPath }, "Starting Symphony service");
@@ -191,9 +192,7 @@ async function main() {
   let dashboard: { start(): void; stop(): void } | null = null;
   if (useTui) {
     const { Dashboard } = await import("./tui/dashboard.ts");
-    const trackerUrl = config.tracker.kind === "feishu_bitable" && config.tracker.app_token && config.tracker.table_id
-      ? `https://mbyzmxekdm.feishu.cn/base/${config.tracker.app_token}?table=${config.tracker.table_id}`
-      : null;
+    const trackerUrl = tracker.getDashboardUrl?.() ?? null;
     dashboard = new Dashboard(orchestrator, tokenStore, trackerUrl);
   }
 

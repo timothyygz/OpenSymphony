@@ -1,6 +1,7 @@
 import { existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { STANDARD_FIELDS } from "../adapters/tracker/feishu-bitable/setup-api.ts";
+import { availableTrackerKinds, getTrackerSetup } from "../adapters/tracker/registry.ts";
+import type { TrackerSetupContext } from "../adapters/tracker/registry.ts";
 
 // --- Types ---
 
@@ -55,11 +56,11 @@ export interface InitDeps {
 }
 
 export interface WizardResult {
-  tracker: { app_token: string; table_id: string };
+  tracker: Record<string, unknown>;
   workspace: Record<string, unknown>;
-  agent: { config: { approval_policy: string } };
+  agent: Record<string, unknown>;
   promptTemplate: string;
-  feishuCredentials?: { app_id: string; app_secret: string };
+  credentials?: Record<string, string>;
 }
 
 // --- Constants ---
@@ -141,15 +142,20 @@ export function scalarYaml(v: unknown): string {
 export function buildWorkflowYaml(result: WizardResult): string {
   const template = loadTemplate("workflow-config.yaml");
   const workspaceYaml = objectToYaml(result.workspace, 1);
+  const trackerYaml = objectToYaml(result.tracker, 1);
 
+  const agentConfig = result.agent as Record<string, unknown>;
+  const approvalPolicy = String(
+    (agentConfig.config as Record<string, unknown> | undefined)?.approval_policy ?? "auto",
+  );
+
+  // Remove the hardcoded tracker block from template and inject generated one
   let yaml = template
-    .replace("{{ app_token }}", String(result.tracker.app_token))
-    .replace("{{ table_id }}", String(result.tracker.table_id))
+    .replace(/^tracker:[\s\S]*?(?=\npolling:)/m, "")
     .replace("{{ workspace }}", workspaceYaml)
-    .replace(
-      "{{ approval_policy }}",
-      String((result.agent.config as Record<string, unknown>).approval_policy),
-    );
+    .replace("{{ approval_policy }}", approvalPolicy);
+
+  yaml = `tracker:\n${trackerYaml}\n${yaml}`;
 
   return `---\n${yaml}\n---\n\n${result.promptTemplate}\n`;
 }
@@ -161,7 +167,6 @@ export function parseBitableUrl(
 ): { appToken: string; tableId?: string } | null {
   try {
     const u = new URL(url);
-    // Match /base/{appToken} in path
     const match = u.pathname.match(/\/base\/([A-Za-z0-9]+)/);
     if (!match) return null;
     const appToken = match[1]!;
@@ -171,8 +176,6 @@ export function parseBitableUrl(
     return null;
   }
 }
-
-const REQUIRED_FIELD_NAMES = STANDARD_FIELDS.map((f) => f.field_name);
 
 // --- Step functions ---
 
@@ -200,287 +203,50 @@ export async function checkExistingWorkflow(
 
 export async function stepTracker(deps: InitDeps): Promise<{
   config: Record<string, unknown>;
-  credentials?: { app_id: string; app_secret: string };
+  credentials?: Record<string, string>;
 } | null> {
   const p = deps.prompts;
 
-  p.note(
-    "需要飞书自建应用的凭据来完成配置。\n\n" +
-      "如果你还没有飞书应用，请前往飞书开放平台创建：\n" +
-      "  https://open.feishu.cn/app\n\n" +
-      "不知道怎么获取？可以问飞书「开放助手」：\n" +
-      "  https://open.feishu.cn/app/ai/playground?from=nav&lang=zh-CN\n\n" +
-      "凭据在应用的「凭证与基础信息」页面中。",
-    "📋 飞书应用配置",
-  );
+  // Ensure tracker adapters are registered so availableTrackerKinds() works
+  await import("../adapters/tracker/feishu-bitable/register.ts");
+  await import("../adapters/tracker/gitlab-issues/register.ts");
 
-  const section = p.group({
-    appId: () =>
-      p.text({
-        message: "飞书 App ID（在应用「凭证与基础信息」页面获取）",
-        placeholder: "cli_xxxxxxxx",
-      }),
-    appSecret: () =>
-      p.text({
-        message: "飞书 App Secret（同页面，点击「显示」复制）",
-        placeholder: "xxxxxxxxxxxxxxxx",
-      }),
-  });
-
-  const result = await section;
-  if (p.isCancel(result)) return null;
-
-  const setupApi = deps.createSetupApi(
-    result.appId as string,
-    result.appSecret as string,
-  );
-
-  // Test connection
-  const s = p.spinner();
-  s.start("Testing Feishu connection...");
-  try {
-    await setupApi.testConnection();
-    s.stop("Connection successful");
-  } catch (err) {
-    s.stop("Connection failed");
-    p.log.error(
-      `Connection error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  const kinds = availableTrackerKinds();
+  if (kinds.length === 0) {
+    p.log.error("No tracker adapters registered");
     return null;
   }
 
-  // Choose: create new or use existing
-  const mode = await p.select({
-    message: "选择多维表格方式",
-    options: [
-      { value: "new", label: "创建新的多维表格" },
-      { value: "existing", label: "使用已有的多维表格" },
-    ],
-  });
-  if (p.isCancel(mode)) return null;
-
-  let appToken: string;
-  let tableId: string;
-
-  if (mode === "existing") {
-    // --- Use existing Bitable ---
-    const urlInput = await p.text({
-      message: "请输入飞书多维表格链接",
-      placeholder: "https://xxx.feishu.cn/base/xxxxxx",
-    });
-    if (p.isCancel(urlInput)) return null;
-
-    const parsed = parseBitableUrl(urlInput as string);
-    if (!parsed) {
-      p.log.error("无法解析多维表格链接，请确认链接格式正确");
-      return null;
-    }
-    appToken = parsed.appToken;
-
-    // Validate access by listing tables
-    s.start("正在获取多维表格信息...");
-    let tables: { table_id: string; name: string }[];
-    try {
-      tables = await setupApi.listTables(appToken);
-      s.stop(`获取成功，共 ${tables.length} 个工作表`);
-    } catch (err) {
-      s.stop("获取失败");
-      p.log.error(
-        `无法访问多维表格: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return null;
-    }
-
-    // If URL has table_id, try to use it directly
-    if (parsed.tableId) {
-      const target = tables.find((t) => t.table_id === parsed.tableId);
-      if (target) {
-        // Validate fields
-        s.start("正在检查工作表字段...");
-        try {
-          const fields = await setupApi.listFields(appToken, parsed.tableId);
-          s.stop("检查完成");
-          const fieldNames = new Set(fields.map((f) => f.field_name));
-          const missing = REQUIRED_FIELD_NAMES.filter(
-            (n) => !fieldNames.has(n),
-          );
-
-          if (missing.length === 0) {
-            p.log.success(`工作表「${target.name}」字段校验通过`);
-            tableId = parsed.tableId;
-            return {
-              config: { app_token: appToken, table_id: tableId },
-              credentials: {
-                app_id: result.appId as string,
-                app_secret: result.appSecret as string,
-              },
-            };
-          }
-          p.log.warn(`工作表缺少字段: ${missing.join(", ")}`);
-          // Fall through to table selection
-        } catch {
-          s.stop("字段检查失败");
-          // Fall through to table selection
-        }
-      }
-    }
-
-    // Let user select a table or create a new one
-    const tableOptions = [
-      ...tables.map((t) => ({ value: t.table_id, label: t.name })),
-      { value: "__create__", label: "创建新工作表（任务）" },
-    ];
-
-    const selectedTable = await p.select({
-      message: "选择工作表",
-      options: tableOptions,
-    });
-    if (p.isCancel(selectedTable)) return null;
-
-    if (selectedTable === "__create__") {
-      s.start("正在创建工作表...");
-      try {
-        const table = await setupApi.createTable(appToken, "任务");
-        tableId = table.table_id;
-        s.stop("工作表创建成功");
-      } catch (err) {
-        s.stop("创建失败");
-        p.log.error(`${err instanceof Error ? err.message : String(err)}`);
-        return null;
-      }
-    } else {
-      // Validate selected table
-      tableId = selectedTable as string;
-      const target = tables.find((t) => t.table_id === tableId);
-
-      s.start("正在检查工作表字段...");
-      try {
-        const fields = await setupApi.listFields(appToken, tableId);
-        s.stop("检查完成");
-        const fieldNames = new Set(fields.map((f) => f.field_name));
-        const missing = REQUIRED_FIELD_NAMES.filter((n) => !fieldNames.has(n));
-
-        if (missing.length > 0) {
-          p.log.warn(
-            `工作表「${target?.name}」缺少字段: ${missing.join(", ")}`,
-          );
-
-          const proceed = await p.confirm({
-            message: "字段不完整，是否在此多维表格中创建新工作表？",
-          });
-          if (p.isCancel(proceed) || !proceed) return null;
-
-          s.start("正在创建工作表...");
-          try {
-            const table = await setupApi.createTable(appToken, "任务");
-            tableId = table.table_id;
-            s.stop("工作表创建成功");
-          } catch (err) {
-            s.stop("创建失败");
-            p.log.error(`${err instanceof Error ? err.message : String(err)}`);
-            return null;
-          }
-        } else {
-          p.log.success(`工作表「${target?.name}」字段校验通过`);
-        }
-      } catch (err) {
-        s.stop("字段检查失败");
-        p.log.error(`${err instanceof Error ? err.message : String(err)}`);
-        return null;
-      }
-    }
-
-    return {
-      config: { app_token: appToken, table_id: tableId },
-      credentials: {
-        app_id: result.appId as string,
-        app_secret: result.appSecret as string,
-      },
-    };
-  }
-
-  // --- Create new Bitable (original flow) ---
-  let defaultTableId: string;
-  let bitableUrl: string;
-  s.start("Creating Bitable app...");
-  try {
-    const app = await setupApi.createApp("Symphony Tracker");
-    appToken = app.app_token;
-    defaultTableId = app.table_id;
-    bitableUrl = app.url;
-    s.stop("Bitable app created");
-  } catch (err) {
-    s.stop("Failed to create Bitable app");
-    p.log.error(`${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-
-  s.start("Creating standard table...");
-  try {
-    const table = await setupApi.createTable(appToken, "任务");
-    tableId = table.table_id;
-    s.stop("Table created");
-  } catch (err) {
-    s.stop("Failed to create table");
-    p.log.error(`${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-
-  // Delete default empty table
-  if (defaultTableId && defaultTableId !== tableId) {
-    s.start("Cleaning up default table...");
-    try {
-      await setupApi.deleteTable(appToken, defaultTableId);
-      s.stop("Default table removed");
-    } catch {
-      s.stop("Could not remove default table (you can delete it manually)");
-    }
-  }
-
-  p.log.success(`Bitable URL: ${bitableUrl}`);
-
-  // Transfer ownership
-  const phone = await p.text({
-    message: "请输入你的手机号（用于转让多维表格所有权，可直接回车跳过）",
-    placeholder: "13800138000",
-  });
-  if (!p.isCancel(phone) && (phone as string).trim()) {
-    const ts = p.spinner();
-    try {
-      ts.start("正在查询用户信息...");
-      const openId = await setupApi.lookupUserByMobile(
-        (phone as string).trim(),
-      );
-      ts.stop("用户查询成功");
-
-      ts.start("正在转让所有权...");
-      await setupApi.transferOwnership(appToken, openId);
-      ts.stop("所有权已转让给你，机器人保留管理权限");
-    } catch (err) {
-      ts.stop("所有权转让失败");
-      p.log.warn(
-        `转让失败: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      p.log.info("你可以在飞书中手动添加自己为多维表格协作者");
-    }
-  } else if (p.isCancel(phone)) {
-    // User pressed ctrl+c on this specific prompt — just skip
+  // If only one kind available, select it directly
+  let selectedKind: string;
+  if (kinds.length === 1) {
+    selectedKind = kinds[0]!;
+    p.log.info(`Using tracker: ${selectedKind}`);
   } else {
-    p.log.info(
-      "已跳过所有权转让。你需要在飞书中手动添加自己为多维表格协作者。",
-    );
+    const kind = await p.select({
+      message: "选择任务追踪器类型",
+      options: kinds.map((k) => ({ value: k, label: k })),
+    });
+    if (p.isCancel(kind)) return null;
+    selectedKind = kind as string;
   }
 
-  return {
-    config: {
-      app_token: appToken,
-      table_id: tableId,
-    },
-    credentials: {
-      app_id: result.appId as string,
-      app_secret: result.appSecret as string,
-    },
+  const setupFn = getTrackerSetup(selectedKind);
+  if (!setupFn) {
+    p.log.error(`No setup function for tracker: ${selectedKind}`);
+    return null;
+  }
+
+  const ctx: TrackerSetupContext = {
+    prompts: deps.prompts,
+    testOverrides: { createSetupApi: deps.createSetupApi },
   };
+  const result = await setupFn(ctx);
+  if (!result.config || Object.keys(result.config).length === 0) {
+    return null;
+  }
+
+  return { config: result.config, credentials: result.credentials };
 }
 
 export async function stepAgent(
@@ -609,8 +375,8 @@ export async function stepTemplate(deps: InitDeps): Promise<string | null> {
 }
 
 export async function writeGlobalSettings(
-  credentials: { app_id: string; app_secret: string },
-  tracker: { app_token: string; table_id: string },
+  credentials: Record<string, string>,
+  trackerConfig: Record<string, unknown>,
   prompts: Prompts,
   homeDir: string,
 ): Promise<void> {
@@ -622,15 +388,9 @@ export async function writeGlobalSettings(
     settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
   }
 
-  const feishu: Record<string, string> = {
-    app_id: credentials.app_id,
-    app_secret: credentials.app_secret,
-    app_token: tracker.app_token,
-    table_id: tracker.table_id,
-  };
-
+  const kind = trackerConfig.kind as string;
   if (!settings.tracker) settings.tracker = {};
-  (settings.tracker as Record<string, unknown>).feishu = feishu;
+  (settings.tracker as Record<string, Record<string, unknown>>)[kind] = { ...credentials };
 
   if (!existsSync(settingsDir)) {
     mkdirSync(settingsDir, { recursive: true });
@@ -700,15 +460,15 @@ export async function initCommand(
     workspace: workspaceConfig,
     agent: agentConfig,
     promptTemplate,
-    feishuCredentials: trackerResult.credentials,
+    credentials: trackerResult.credentials,
   };
 
   const workflowContent = buildWorkflowYaml(result);
 
   // Write credentials to settings.json
-  if (result.feishuCredentials) {
+  if (result.credentials) {
     await writeGlobalSettings(
-      result.feishuCredentials,
+      result.credentials,
       result.tracker,
       p,
       deps.homedir(),

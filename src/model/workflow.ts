@@ -29,6 +29,11 @@ export const trackerConfigSchema = z.object({
   join_command_field: z.string().optional(),
   progress_field: z.string().optional(),
   result_summary_field: z.string().optional(),
+  // GitLab Issues specific
+  gitlab_host: z.string().optional(),
+  gitlab_token: z.string().optional(),
+  project_id: z.string().optional(),
+  label_prefix: z.string().optional(),
 });
 export type TrackerConfig = z.infer<typeof trackerConfigSchema>;
 

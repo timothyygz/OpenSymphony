@@ -96,6 +96,8 @@ function createMockSetupApi(overrides: Partial<SetupApi> = {}): SetupApi {
     deleteTable: overrides.deleteTable ?? (async () => {}),
     lookupUserByMobile: overrides.lookupUserByMobile ?? (async () => "ou_test_user"),
     transferOwnership: overrides.transferOwnership ?? (async () => {}),
+    listTables: overrides.listTables ?? (async () => []),
+    listFields: overrides.listFields ?? (async () => []),
   };
 }
 
@@ -110,7 +112,7 @@ describe("stepTracker prompt messages", () => {
       checkClaudeCli: async () => true,
       homedir: () => "/tmp/test-home",
     };
-    mock.enqueue("cli_test_app", "test_secret", "");
+    mock.enqueue("feishu_bitable", "cli_test_app", "test_secret", "new", "");
 
     await stepTracker(deps);
 
@@ -130,7 +132,7 @@ describe("stepTracker prompt messages", () => {
       checkClaudeCli: async () => true,
       homedir: () => "/tmp/test-home",
     };
-    mock.enqueue("cli_test_app", "test_secret", "");
+    mock.enqueue("feishu_bitable", "cli_test_app", "test_secret", "new", "");
 
     await stepTracker(deps);
 
@@ -149,7 +151,7 @@ describe("stepTracker prompt messages", () => {
       checkClaudeCli: async () => true,
       homedir: () => "/tmp/test-home",
     };
-    mock.enqueue("cli_test_app", "test_secret", "");
+    mock.enqueue("feishu_bitable", "cli_test_app", "test_secret", "new", "");
 
     await stepTracker(deps);
 

@@ -60,8 +60,8 @@ function createMockDeps(setupApiOverrides: Partial<SetupApi> = {}): {
 describe("stepTracker", () => {
   test("happy path (new): connection ok, skip ownership transfer", async () => {
     const { deps, enqueue } = createMockDeps();
-    // appId, appSecret (from group), mode="new", phone (empty)
-    enqueue("cli_test_app", "test_secret", "new", "");
+    // tracker kind, appId, appSecret (from group), mode="new", phone (empty)
+    enqueue("feishu_bitable", "cli_test_app", "test_secret", "new", "");
 
     const result = await stepTracker(deps);
 
@@ -76,7 +76,7 @@ describe("stepTracker", () => {
       lookupUserByMobile: async () => "ou_transferred_user",
       transferOwnership: async () => {},
     });
-    enqueue("cli_app", "secret", "new", "13800138000");
+    enqueue("feishu_bitable", "cli_app", "secret", "new", "13800138000");
 
     const result = await stepTracker(deps);
     expect(result).not.toBeNull();
@@ -87,7 +87,7 @@ describe("stepTracker", () => {
     const { deps, enqueue } = createMockDeps({
       testConnection: async () => { throw new Error("Auth failed"); },
     });
-    enqueue("cli_app", "bad_secret");
+    enqueue("feishu_bitable", "cli_app", "bad_secret");
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
@@ -97,7 +97,7 @@ describe("stepTracker", () => {
     const { deps, enqueue } = createMockDeps({
       createApp: async () => { throw new Error("API error"); },
     });
-    enqueue("cli_app", "secret", "new");
+    enqueue("feishu_bitable", "cli_app", "secret", "new");
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
@@ -107,7 +107,7 @@ describe("stepTracker", () => {
     const { deps, enqueue } = createMockDeps({
       createTable: async () => { throw new Error("Table error"); },
     });
-    enqueue("cli_app", "secret", "new");
+    enqueue("feishu_bitable", "cli_app", "secret", "new");
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
@@ -115,7 +115,7 @@ describe("stepTracker", () => {
 
   test("returns null when user cancels on appId/appSecret", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue(CANCEL);
+    enqueue("feishu_bitable", CANCEL);
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
@@ -123,7 +123,7 @@ describe("stepTracker", () => {
 
   test("returns null when user cancels on mode selection", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("cli_app", "secret", CANCEL);
+    enqueue("feishu_bitable", "cli_app", "secret", CANCEL);
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
@@ -138,8 +138,8 @@ describe("stepTracker", () => {
       ],
       listFields: async () => makeValidFields(),
     });
-    // appId, appSecret, mode="existing", url, selected table
-    enqueue("cli_app", "secret", "existing",
+    // kind, appId, appSecret, mode="existing", url, selected table
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basTest123",
       "tbl_existing");
 
@@ -157,8 +157,8 @@ describe("stepTracker", () => {
       ],
       listFields: async () => makeValidFields(),
     });
-    // appId, appSecret, mode="existing", url (with table param)
-    enqueue("cli_app", "secret", "existing",
+    // kind, appId, appSecret, mode="existing", url (with table param)
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basTest123?table=tbl_from_url");
 
     const result = await stepTracker(deps);
@@ -174,8 +174,8 @@ describe("stepTracker", () => {
       ],
       listFields: async () => [{ field_name: "标题", type: 1 }], // missing many fields
     });
-    // appId, appSecret, mode, url (with table), select create new table
-    enqueue("cli_app", "secret", "existing",
+    // kind, appId, appSecret, mode, url (with table), select create new table
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basTest?table=tbl_bad",
       "__create__");
 
@@ -191,8 +191,8 @@ describe("stepTracker", () => {
         { table_id: "tbl_other", name: "其他表" },
       ],
     });
-    // appId, appSecret, mode, url, select "__create__"
-    enqueue("cli_app", "secret", "existing",
+    // kind, appId, appSecret, mode, url, select "__create__"
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basExisting",
       "__create__");
 
@@ -209,8 +209,8 @@ describe("stepTracker", () => {
       ],
       listFields: async () => [{ field_name: "标题", type: 1 }],
     });
-    // appId, appSecret, mode, url, select existing table, confirm create new
-    enqueue("cli_app", "secret", "existing",
+    // kind, appId, appSecret, mode, url, select existing table, confirm create new
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basTest",
       "tbl_incomplete", true);
 
@@ -226,8 +226,8 @@ describe("stepTracker", () => {
       ],
       listFields: async () => [{ field_name: "标题", type: 1 }],
     });
-    // appId, appSecret, mode, url, select existing table, reject create
-    enqueue("cli_app", "secret", "existing",
+    // kind, appId, appSecret, mode, url, select existing table, reject create
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basTest",
       "tbl_incomplete", false);
 
@@ -237,7 +237,7 @@ describe("stepTracker", () => {
 
   test("existing: invalid URL → null", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("cli_app", "secret", "existing", "not-a-valid-url");
+    enqueue("feishu_bitable", "cli_app", "secret", "existing", "not-a-valid-url");
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
@@ -245,7 +245,7 @@ describe("stepTracker", () => {
 
   test("existing: cancel on URL input → null", async () => {
     const { deps, enqueue } = createMockDeps();
-    enqueue("cli_app", "secret", "existing", CANCEL);
+    enqueue("feishu_bitable", "cli_app", "secret", "existing", CANCEL);
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
@@ -257,7 +257,7 @@ describe("stepTracker", () => {
         { table_id: "tbl_x", name: "表" },
       ],
     });
-    enqueue("cli_app", "secret", "existing",
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basTest", CANCEL);
 
     const result = await stepTracker(deps);
@@ -268,7 +268,7 @@ describe("stepTracker", () => {
     const { deps, enqueue } = createMockDeps({
       listTables: async () => { throw new Error("Access denied"); },
     });
-    enqueue("cli_app", "secret", "existing",
+    enqueue("feishu_bitable", "cli_app", "secret", "existing",
       "https://xxx.feishu.cn/base/basTest");
 
     const result = await stepTracker(deps);

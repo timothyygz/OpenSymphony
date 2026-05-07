@@ -40,7 +40,7 @@ function createFlowDeps(tempDir: string, setupApiOverrides: Partial<SetupApi> = 
 
 // Answer sequence for a full happy path:
 // checkExistingWorkflow (no file → no prompt)
-// stepTracker: appId, appSecret (group), phone (empty)
+// stepTracker: tracker kind selection, appId, appSecret (group), phone (empty)
 // stepAgent: approvalPolicy
 // stepWorkspace: sourceType, root
 // stepTemplate: template file
@@ -49,7 +49,10 @@ function happyPathAnswers(overrides: Partial<{
   template: string;
   sourceType: string;
 }> = {}): unknown[] {
-  return [
+  const sourceType = overrides.sourceType ?? "none";
+  const answers: unknown[] = [
+    // stepTracker: tracker kind selection
+    "feishu_bitable",
     // stepTracker group: appId, appSecret
     "cli_test_app", "test_secret",
     // mode selection: "new"
@@ -58,11 +61,20 @@ function happyPathAnswers(overrides: Partial<{
     overrides.phone ?? "",
     // stepAgent: approvalPolicy
     "auto",
-    // stepWorkspace: sourceType, root
-    overrides.sourceType ?? "none", "~/.open-symphony/workspace",
-    // stepTemplate: template file
-    overrides.template ?? "basic.md",
+    // stepWorkspace: sourceType
+    sourceType,
   ];
+  // stepWorkspace: additional prompts based on source type
+  if (sourceType === "none") {
+    // no more prompts
+  } else if (sourceType === "git-worktree") {
+    answers.push("~/Workspace/repo", "repo");
+  } else if (sourceType === "git-clone") {
+    answers.push("git@github.com:org/repo.git", "repo", "main");
+  }
+  // stepTemplate: template file
+  answers.push(overrides.template ?? "basic.md");
+  return answers;
 }
 
 describe("initCommand full flow", () => {
@@ -97,10 +109,8 @@ describe("initCommand full flow", () => {
     const settingsPath = join(tempDir, ".open-symphony", "settings.json");
     expect(existsSync(settingsPath)).toBe(true);
     const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-    expect(settings.tracker.feishu.app_id).toBe("cli_test_app");
-    expect(settings.tracker.feishu.app_secret).toBe("test_secret");
-    expect(settings.tracker.feishu.app_token).toBe("test_app_token");
-    expect(settings.tracker.feishu.table_id).toBe("test_new_table");
+    expect(settings.tracker.feishu_bitable.app_id).toBe("cli_test_app");
+    expect(settings.tracker.feishu_bitable.app_secret).toBe("test_secret");
   });
 
   test("cancel at tracker step — no file written", async () => {
@@ -114,8 +124,8 @@ describe("initCommand full flow", () => {
 
   test("cancel at agent step — no file written", async () => {
     const { deps, enqueue } = createFlowDeps(tempDir);
-    // stepTracker answers (with mode "new") + cancel at agent
-    enqueue("cli_app", "secret", "new", "", CANCEL);
+    // stepTracker: kind selection + answers (with mode "new") + cancel at agent
+    enqueue("feishu_bitable", "cli_app", "secret", "new", "", CANCEL);
 
     await initCommand([tempDir], deps);
 

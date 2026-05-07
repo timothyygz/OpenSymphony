@@ -5,6 +5,7 @@ import type { AgentSessionContext } from "../../src/adapters/agent/types.ts";
 import type { Issue } from "../../src/model/issue.ts";
 import { createTrackerMcpServer } from "../../src/adapters/agent/claude-code/tracker-tools.ts";
 import { FeishuBitableApi } from "../../src/adapters/tracker/feishu-bitable/api.ts";
+import { FeishuBitableAdapter } from "../../src/adapters/tracker/feishu-bitable/adapter.ts";
 import { FeishuAuth } from "../../src/adapters/tracker/feishu-bitable/auth.ts";
 import { randomUUID } from "crypto";
 
@@ -178,6 +179,18 @@ describe.skipIf(!process.env.SYMPHONY_INTEGRATION || !hasFeishu)("ClaudeCodeAdap
   const { FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_APP_TOKEN, FEISHU_TABLE_ID } = process.env;
   const auth = new FeishuAuth(FEISHU_APP_ID!, FEISHU_APP_SECRET!);
   const api = new FeishuBitableApi(auth, FEISHU_APP_TOKEN!, FEISHU_TABLE_ID!);
+  const feishuAdapter = new FeishuBitableAdapter({
+    appId: FEISHU_APP_ID!,
+    appSecret: FEISHU_APP_SECRET!,
+    appToken: FEISHU_APP_TOKEN!,
+    tableId: FEISHU_TABLE_ID!,
+    stateField: "状态",
+    identifierField: "编号",
+    titleField: "标题",
+    descriptionField: "描述",
+    activeStates: ["待处理", "进行中"],
+    terminalStates: ["已完成", "已取消"],
+  });
   const createdRecordIds: string[] = [];
 
   afterAll(async () => {
@@ -193,7 +206,7 @@ describe.skipIf(!process.env.SYMPHONY_INTEGRATION || !hasFeishu)("ClaudeCodeAdap
     async () => {
       const adapter = new ClaudeCodeAdapter({ approvalPolicy: "auto" });
       const testTitle = `[SDK test] ${Date.now()}`;
-      const trackerMcpServer = createTrackerMcpServer(api, "test-issue");
+      const trackerMcpServer = createTrackerMcpServer(feishuAdapter, "test-issue");
 
       const ctx = makeSessionCtx();
       ctx.mcpServers = { tracker: trackerMcpServer };

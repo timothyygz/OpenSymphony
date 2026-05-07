@@ -101,7 +101,7 @@ describe("buildWorkflowYaml", () => {
     workspace: { root: "~/.open-symphony/workspace" },
     agent: { config: { approval_policy: "auto" } },
     promptTemplate: "# My Template\nHello world",
-    feishuCredentials: { app_id: "cli_123", app_secret: "secret456" },
+    credentials: { app_id: "cli_123", app_secret: "secret456" },
   };
 
   test("starts with --- delimiter", () => {

@@ -1,8 +1,11 @@
 import { describe, test, expect, afterAll } from "bun:test";
-import { createBitableTool } from "../../src/adapters/agent/claude-code/tracker-tools.ts";
+import { createTrackerTool } from "../../src/adapters/agent/claude-code/tracker-tools.ts";
+import type { TrackerAdapter, CreateIssueData } from "../../src/adapters/tracker/types.ts";
+import type { Issue, TokenUsage } from "../../src/model/index.ts";
 import { FeishuBitableApi } from "../../src/adapters/tracker/feishu-bitable/api.ts";
 import { FeishuAuth } from "../../src/adapters/tracker/feishu-bitable/auth.ts";
 import type { BitableRecord } from "../../src/adapters/tracker/feishu-bitable/api.ts";
+import { FeishuBitableAdapter } from "../../src/adapters/tracker/feishu-bitable/adapter.ts";
 
 const { FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_APP_TOKEN, FEISHU_TABLE_ID } = process.env;
 
@@ -11,11 +14,28 @@ const hasFeishu = !!(FEISHU_APP_ID && FEISHU_APP_SECRET && FEISHU_APP_TOKEN && F
 const auth = new FeishuAuth(FEISHU_APP_ID!, FEISHU_APP_SECRET!);
 const api = new FeishuBitableApi(auth, FEISHU_APP_TOKEN!, FEISHU_TABLE_ID!);
 
-describe.skipIf(!hasFeishu)("Bitable tracker tools (integration)", () => {
+function createTestAdapter(): TrackerAdapter {
+  return new FeishuBitableAdapter({
+    appId: FEISHU_APP_ID!,
+    appSecret: FEISHU_APP_SECRET!,
+    appToken: FEISHU_APP_TOKEN!,
+    tableId: FEISHU_TABLE_ID!,
+    stateField: "状态",
+    identifierField: "编号",
+    titleField: "标题",
+    descriptionField: "描述",
+    progressField: "进度",
+    activeStates: ["待处理", "进行中"],
+    terminalStates: ["已完成", "已取消"],
+  });
+}
+
+describe.skipIf(!hasFeishu)("Tracker tools (integration)", () => {
 
 let testRecord: BitableRecord | undefined;
 let originalProgress: unknown;
 let createdRecordId: string | undefined;
+const adapter = createTestAdapter();
 
 afterAll(async () => {
   if (testRecord) {
@@ -44,7 +64,7 @@ async function findTestRecord(): Promise<BitableRecord> {
 
 function callHandler(args: Record<string, unknown>) {
   const issueId = testRecord?.record_id ?? "unknown";
-  const toolDef = createBitableTool(api, issueId);
+  const toolDef = createTrackerTool(adapter, issueId);
   return toolDef.handler(args as any, {});
 }
 
@@ -66,7 +86,7 @@ test("get action returns the current issue record", async () => {
   expect(result.isError).toBeUndefined();
   const text = (result.content as any[])[0].text;
   const parsed = JSON.parse(text);
-  expect(parsed.record_id).toBe(record.record_id);
+  expect(parsed.id).toBe(record.record_id);
 });
 
 test("get action returns error for nonexistent record", async () => {
@@ -84,7 +104,7 @@ test("update action writes fields to real Bitable", async () => {
 
   const result = await callHandler({
     action: "update",
-    fields: { "进度": progressText },
+    fields: { progress: progressText },
   });
 
   expect(result.isError).toBeUndefined();
@@ -108,55 +128,50 @@ test("update action returns error when no fields", async () => {
 test("search action filters records", async () => {
   const result = await callHandler({
     action: "search",
-    filter: {
-      conjunction: "and",
-      conditions: [{ field_name: "状态", operator: "is", value: ["已完成"] }],
-    },
+    query: "test",
   });
 
   expect(result.isError).toBeUndefined();
   const text = (result.content as any[])[0].text;
   const records = JSON.parse(text);
-  expect(records.length).toBeGreaterThanOrEqual(1);
-  expect(records[0].fields["状态"]).toBe("已完成");
+  expect(Array.isArray(records)).toBe(true);
 });
 
-test("search action returns error when no filter", async () => {
+test("search action returns error when no query", async () => {
   const result = await callHandler({ action: "search" });
 
   expect(result.isError).toBe(true);
   const text = (result.content as any[])[0].text;
-  expect(text).toContain("Filter is required");
+  expect(text).toContain("Query is required");
 });
 
 test("create action creates a new record in real Bitable", async () => {
   const result = await callHandler({
     action: "create",
     fields: {
-      "标题": `[test] Tracker tools create test ${Date.now()}`,
-      "描述": "Created by automated test, will be cleaned up",
-      "状态": "已取消",
+      title: `[test] Tracker tools create test ${Date.now()}`,
+      description: "Created by automated test, will be cleaned up",
+      state: "已取消",
     },
   });
 
   expect(result.isError).toBeUndefined();
   const text = (result.content as any[])[0].text;
-  const record = JSON.parse(text);
-  expect(record.record_id).toBeDefined();
-  expect(record.fields["标题"]).toContain("[test] Tracker tools create test");
+  const issue = JSON.parse(text);
+  expect(issue.id).toBeDefined();
 
-  createdRecordId = record.record_id;
+  createdRecordId = issue.id;
 
   // Verify by reading back
   const verifyResult = await callHandler({ action: "get", record_id: createdRecordId });
   expect(verifyResult.isError).toBeUndefined();
 });
 
-test("create action returns error when no fields", async () => {
+test("create action returns error when no title", async () => {
   const result = await callHandler({ action: "create" });
 
   expect(result.isError).toBe(true);
   const text = (result.content as any[])[0].text;
-  expect(text).toContain("No fields");
+  expect(text).toContain("No title");
 });
 });

@@ -19,8 +19,6 @@ import { runHookIfConfigured, runHookBestEffort } from "../workspace/hooks.ts";
 import { isActiveState } from "./state.ts";
 import type { OrchestratorState } from "./state.ts";
 import { cancelRetry } from "./retry.ts";
-import { createTrackerMcpServer } from "../adapters/agent/claude-code/tracker-tools.ts";
-import { FeishuBitableAdapter } from "../adapters/tracker/feishu-bitable/adapter.ts";
 import { logger } from "../logging/logger.ts";
 import { writeMetaJson, updateMetaJson } from "../logging/turn-log.ts";
 import type { EventProcessor } from "./event-processor.ts";
@@ -147,20 +145,8 @@ export class WorkerRunner {
       // before_run hook
       await runHookIfConfigured("before_run", hooks, workspace.path);
 
-      // Create tracker MCP server for agent (if tracker is FeishuBitable)
-      let mcpServers:
-        | Record<
-            string,
-            import("@anthropic-ai/claude-agent-sdk").McpServerConfig
-          >
-        | undefined;
-      if (this.deps.tracker instanceof FeishuBitableAdapter) {
-        const trackerMcpServer = createTrackerMcpServer(
-          this.deps.tracker.api,
-          issue.id,
-        );
-        mcpServers = { tracker: trackerMcpServer };
-      }
+      // Create tracker MCP server for agent
+      const mcpServers = this.deps.tracker.getMcpServerConfig(issue.id);
 
       // Start agent session
       session = await agent.startSession({
@@ -210,12 +196,11 @@ export class WorkerRunner {
         turnNumber++;
 
         // Build prompt
-        const trackerGuidance = mcpServers
-          ? "\n\nYou have a 'tracker_tool' tool to interact with the Feishu Bitable tracker. " +
-            "Use 'tracker_tool' action='update' to update fields (state, progress, result summary, etc.). " +
-            "When the task is complete, update the result summary and state to mark it done. " +
-            "Use 'tracker_tool' action='get' to read the current record if needed."
-          : "";
+        const trackerGuidance =
+          "\n\nYou have a 'tracker_tool' tool to interact with the tracker. " +
+          "Use 'tracker_tool' action='update' to update fields (state, progress, result summary, etc.). " +
+          "When the task is complete, update the result summary and state to mark it done. " +
+          "Use 'tracker_tool' action='get' to read the current record if needed.";
         const prompt =
           turnNumber === 1
             ? renderTemplate(workflow.promptTemplate, issue, attempt) +
