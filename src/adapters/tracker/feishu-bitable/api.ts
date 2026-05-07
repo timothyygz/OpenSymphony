@@ -1,6 +1,5 @@
 import { FeishuAuth } from "./auth.ts";
-
-const FEISHU_BASE = "https://open.feishu.cn";
+import { FEISHU_BASE } from "./constants.ts";
 
 export interface BitableRecord {
   record_id: string;
@@ -20,6 +19,41 @@ export interface BitableListResponse {
   };
 }
 
+interface ApiResponse {
+  code: number;
+  msg: string;
+  data: Record<string, unknown>;
+}
+
+export async function feishuRequest<T extends ApiResponse>(
+  auth: FeishuAuth,
+  url: string,
+  options?: { method?: string; body?: unknown },
+): Promise<T> {
+  const token = await auth.getAccessToken();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  const resp = await fetch(url, {
+    method: options?.method ?? "GET",
+    headers,
+    body: options?.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Feishu API error: HTTP ${resp.status} ${await resp.text()}`);
+  }
+
+  const data = (await resp.json()) as T;
+  if (data.code !== 0) {
+    throw new Error(`Feishu API error: code=${data.code} msg=${data.msg}`);
+  }
+
+  return data;
+}
+
 export class FeishuBitableApi {
   constructor(
     private readonly auth: FeishuAuth,
@@ -35,24 +69,8 @@ export class FeishuBitableApi {
       const params = new URLSearchParams({ page_size: String(pageSize) });
       if (pageToken) params.set("page_token", pageToken);
 
-      const token = await this.auth.getAccessToken();
       const url = `${FEISHU_BASE}/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records?${params}`;
-
-      const resp = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (!resp.ok) {
-        throw new Error(`Feishu API error: HTTP ${resp.status} ${await resp.text()}`);
-      }
-
-      const data = (await resp.json()) as BitableListResponse;
-      if (data.code !== 0) {
-        throw new Error(`Feishu API error: code=${data.code} msg=${data.msg}`);
-      }
+      const data = await feishuRequest<BitableListResponse>(this.auth, url);
 
       if (data.data.items) {
         records.push(...data.data.items);
@@ -72,26 +90,11 @@ export class FeishuBitableApi {
       if (pageToken) body.page_token = pageToken;
       if (filter) body.filter = filter;
 
-      const token = await this.auth.getAccessToken();
       const url = `${FEISHU_BASE}/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`;
-
-      const resp = await fetch(url, {
+      const data = await feishuRequest<BitableListResponse>(this.auth, url, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
+        body,
       });
-
-      if (!resp.ok) {
-        throw new Error(`Feishu API error: HTTP ${resp.status} ${await resp.text()}`);
-      }
-
-      const data = (await resp.json()) as BitableListResponse;
-      if (data.code !== 0) {
-        throw new Error(`Feishu API error: code=${data.code} msg=${data.msg}`);
-      }
 
       if (data.data.items) {
         records.push(...data.data.items);
@@ -103,52 +106,18 @@ export class FeishuBitableApi {
   }
 
   async createRecord(fields: Record<string, unknown>): Promise<BitableRecord> {
-    const token = await this.auth.getAccessToken();
     const url = `${FEISHU_BASE}/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records`;
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ fields }),
-    });
-
-    if (!resp.ok) {
-      throw new Error(`Feishu API error: HTTP ${resp.status} ${await resp.text()}`);
-    }
-
-    const data = (await resp.json()) as { code: number; msg: string; data: { record: BitableRecord } };
-    if (data.code !== 0) {
-      throw new Error(`Feishu API error: code=${data.code} msg=${data.msg}`);
-    }
-
+    const data = await feishuRequest<{ code: number; msg: string; data: { record: BitableRecord } }>(
+      this.auth, url, { method: "POST", body: { fields } },
+    );
     return data.data.record;
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<BitableRecord> {
-    const token = await this.auth.getAccessToken();
     const url = `${FEISHU_BASE}/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`;
-
-    const resp = await fetch(url, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ fields }),
-    });
-
-    if (!resp.ok) {
-      throw new Error(`Feishu API error: HTTP ${resp.status} ${await resp.text()}`);
-    }
-
-    const data = (await resp.json()) as { code: number; msg: string; data: { record: BitableRecord } };
-    if (data.code !== 0) {
-      throw new Error(`Feishu API error: code=${data.code} msg=${data.msg}`);
-    }
-
+    const data = await feishuRequest<{ code: number; msg: string; data: { record: BitableRecord } }>(
+      this.auth, url, { method: "PUT", body: { fields } },
+    );
     return data.data.record;
   }
 }

@@ -48,11 +48,3 @@ export const logger: pino.Logger = new Proxy({} as pino.Logger, {
     return Reflect.get(getLogger(), prop);
   },
 });
-
-export function issueLogger(issueId: string, issueIdentifier: string) {
-  return logger.child({ issue_id: issueId, issue_identifier: issueIdentifier });
-}
-
-export function sessionLogger(sessionId: string) {
-  return logger.child({ session_id: sessionId });
-}

@@ -29,10 +29,6 @@ export function exitAltScreen(): void {
   process.stdout.write(ANSI.exitAltScreen);
 }
 
-export function clearScreen(): void {
-  process.stdout.write(ANSI.home + ANSI.clear);
-}
-
 export function drawLines(lines: string[]): void {
   process.stdout.write(ANSI.home + ANSI.clear + lines.join("\n") + "\n");
 }

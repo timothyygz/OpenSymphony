@@ -1,4 +1,4 @@
-const FEISHU_BASE = "https://open.feishu.cn";
+import { FEISHU_BASE } from "./constants.ts";
 
 interface TokenResponse {
   code: number;
