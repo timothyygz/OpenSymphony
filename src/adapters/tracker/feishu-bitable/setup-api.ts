@@ -25,7 +25,7 @@ export interface FieldDefinition {
   property?: Record<string, unknown>;
 }
 
-const STANDARD_FIELDS: FieldDefinition[] = [
+export const STANDARD_FIELDS: FieldDefinition[] = [
   { field_name: "标题", type: 1 },
   { field_name: "编号", type: 1005, property: { auto_serial: { type: "auto_increment_number" } } },
   {
@@ -57,7 +57,20 @@ const STANDARD_FIELDS: FieldDefinition[] = [
   {
     field_name: "标签",
     type: 4,
-    property: { options: [] },
+    property: {
+      options: [
+        { name: "bug" },
+        { name: "feature" },
+        { name: "enhancement" },
+        { name: "documentation" },
+        { name: "refactor" },
+        { name: "test" },
+        { name: "performance" },
+        { name: "security" },
+        { name: "hotfix" },
+        { name: "tech-debt" },
+      ],
+    },
   },
   { field_name: "tokens消耗", type: 2 },
   { field_name: "进度", type: 2, ui_type: "Progress", property: { formatter: "0%" } },
