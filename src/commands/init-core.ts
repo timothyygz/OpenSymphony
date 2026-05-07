@@ -1,5 +1,6 @@
 import { existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { STANDARD_FIELDS } from "../adapters/tracker/feishu-bitable/setup-api.ts";
 
 // --- Types ---
 
@@ -166,9 +167,7 @@ export function parseBitableUrl(url: string): { appToken: string; tableId?: stri
   }
 }
 
-const REQUIRED_FIELD_NAMES = [
-  "标题", "编号", "状态", "描述", "优先级", "标签", "tokens消耗", "进度", "结果摘要", "操作命令",
-];
+const REQUIRED_FIELD_NAMES = STANDARD_FIELDS.map((f) => f.field_name);
 
 // --- Step functions ---
 
@@ -240,8 +239,6 @@ export async function stepTracker(deps: InitDeps): Promise<{
 
   let appToken: string;
   let tableId: string;
-  let bitableUrl: string | undefined;
-  let shouldTransferOwnership = false;
 
   if (mode === "existing") {
     // --- Use existing Bitable ---
@@ -376,6 +373,7 @@ export async function stepTracker(deps: InitDeps): Promise<{
 
   // --- Create new Bitable (original flow) ---
   let defaultTableId: string;
+  let bitableUrl: string;
   s.start("Creating Bitable app...");
   try {
     const app = await setupApi.createApp("Symphony Tracker");
