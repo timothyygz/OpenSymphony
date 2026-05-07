@@ -59,6 +59,7 @@ export class TokenStore {
     this.db = new Database(dbPath, { create: true });
     this.db.exec("PRAGMA journal_mode=WAL");
     this.db.exec(CREATE_TABLE_SQL);
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_token_records_completed_at ON token_records(completed_at)");
   }
 
   append(record: TokenRecord): void {

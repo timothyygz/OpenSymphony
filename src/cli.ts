@@ -157,6 +157,7 @@ async function main() {
     logger.info("Shutting down...");
     watcher.stop();
     await orchestrator.stop();
+    tokenStore.close();
     process.exit(0);
   };
 
