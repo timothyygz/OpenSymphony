@@ -1,5 +1,6 @@
 import { existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { STANDARD_FIELDS } from "../adapters/tracker/feishu-bitable/setup-api.ts";
 
 // --- Types ---
 
@@ -39,6 +40,11 @@ export interface SetupApi {
   deleteTable(appToken: string, tableId: string): Promise<void>;
   lookupUserByMobile(phone: string): Promise<string>;
   transferOwnership(appToken: string, openId: string): Promise<void>;
+  listTables(appToken: string): Promise<{ table_id: string; name: string }[]>;
+  listFields(
+    appToken: string,
+    tableId: string,
+  ): Promise<{ field_name: string; type: number }[]>;
 }
 
 export interface InitDeps {
@@ -148,6 +154,26 @@ export function buildWorkflowYaml(result: WizardResult): string {
   return `---\n${yaml}\n---\n\n${result.promptTemplate}\n`;
 }
 
+// --- URL parsing ---
+
+export function parseBitableUrl(
+  url: string,
+): { appToken: string; tableId?: string } | null {
+  try {
+    const u = new URL(url);
+    // Match /base/{appToken} in path
+    const match = u.pathname.match(/\/base\/([A-Za-z0-9]+)/);
+    if (!match) return null;
+    const appToken = match[1]!;
+    const tableId = u.searchParams.get("table") ?? undefined;
+    return { appToken, tableId };
+  } catch {
+    return null;
+  }
+}
+
+const REQUIRED_FIELD_NAMES = STANDARD_FIELDS.map((f) => f.field_name);
+
 // --- Step functions ---
 
 export async function checkExistingWorkflow(
@@ -177,11 +203,28 @@ export async function stepTracker(deps: InitDeps): Promise<{
   credentials?: { app_id: string; app_secret: string };
 } | null> {
   const p = deps.prompts;
+
+  p.note(
+    "需要飞书自建应用的凭据来完成配置。\n\n" +
+      "如果你还没有飞书应用，请前往飞书开放平台创建：\n" +
+      "  https://open.feishu.cn/app\n\n" +
+      "不知道怎么获取？可以问飞书「开放助手」：\n" +
+      "  https://open.feishu.cn/app/ai/playground?from=nav&lang=zh-CN\n\n" +
+      "凭据在应用的「凭证与基础信息」页面中。",
+    "📋 飞书应用配置",
+  );
+
   const section = p.group({
     appId: () =>
-      p.text({ message: "Feishu App ID", placeholder: "cli_xxxxxxxx" }),
+      p.text({
+        message: "飞书 App ID（在应用「凭证与基础信息」页面获取）",
+        placeholder: "cli_xxxxxxxx",
+      }),
     appSecret: () =>
-      p.text({ message: "Feishu App Secret", placeholder: "xxxxxxxxxxxxxxxx" }),
+      p.text({
+        message: "飞书 App Secret（同页面，点击「显示」复制）",
+        placeholder: "xxxxxxxxxxxxxxxx",
+      }),
   });
 
   const result = await section;
@@ -206,9 +249,157 @@ export async function stepTracker(deps: InitDeps): Promise<{
     return null;
   }
 
-  // Auto-create Bitable app + table
+  // Choose: create new or use existing
+  const mode = await p.select({
+    message: "选择多维表格方式",
+    options: [
+      { value: "new", label: "创建新的多维表格" },
+      { value: "existing", label: "使用已有的多维表格" },
+    ],
+  });
+  if (p.isCancel(mode)) return null;
+
   let appToken: string;
-  let newTableId: string;
+  let tableId: string;
+
+  if (mode === "existing") {
+    // --- Use existing Bitable ---
+    const urlInput = await p.text({
+      message: "请输入飞书多维表格链接",
+      placeholder: "https://xxx.feishu.cn/base/xxxxxx",
+    });
+    if (p.isCancel(urlInput)) return null;
+
+    const parsed = parseBitableUrl(urlInput as string);
+    if (!parsed) {
+      p.log.error("无法解析多维表格链接，请确认链接格式正确");
+      return null;
+    }
+    appToken = parsed.appToken;
+
+    // Validate access by listing tables
+    s.start("正在获取多维表格信息...");
+    let tables: { table_id: string; name: string }[];
+    try {
+      tables = await setupApi.listTables(appToken);
+      s.stop(`获取成功，共 ${tables.length} 个工作表`);
+    } catch (err) {
+      s.stop("获取失败");
+      p.log.error(
+        `无法访问多维表格: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+
+    // If URL has table_id, try to use it directly
+    if (parsed.tableId) {
+      const target = tables.find((t) => t.table_id === parsed.tableId);
+      if (target) {
+        // Validate fields
+        s.start("正在检查工作表字段...");
+        try {
+          const fields = await setupApi.listFields(appToken, parsed.tableId);
+          s.stop("检查完成");
+          const fieldNames = new Set(fields.map((f) => f.field_name));
+          const missing = REQUIRED_FIELD_NAMES.filter(
+            (n) => !fieldNames.has(n),
+          );
+
+          if (missing.length === 0) {
+            p.log.success(`工作表「${target.name}」字段校验通过`);
+            tableId = parsed.tableId;
+            return {
+              config: { app_token: appToken, table_id: tableId },
+              credentials: {
+                app_id: result.appId as string,
+                app_secret: result.appSecret as string,
+              },
+            };
+          }
+          p.log.warn(`工作表缺少字段: ${missing.join(", ")}`);
+          // Fall through to table selection
+        } catch {
+          s.stop("字段检查失败");
+          // Fall through to table selection
+        }
+      }
+    }
+
+    // Let user select a table or create a new one
+    const tableOptions = [
+      ...tables.map((t) => ({ value: t.table_id, label: t.name })),
+      { value: "__create__", label: "创建新工作表（任务）" },
+    ];
+
+    const selectedTable = await p.select({
+      message: "选择工作表",
+      options: tableOptions,
+    });
+    if (p.isCancel(selectedTable)) return null;
+
+    if (selectedTable === "__create__") {
+      s.start("正在创建工作表...");
+      try {
+        const table = await setupApi.createTable(appToken, "任务");
+        tableId = table.table_id;
+        s.stop("工作表创建成功");
+      } catch (err) {
+        s.stop("创建失败");
+        p.log.error(`${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      }
+    } else {
+      // Validate selected table
+      tableId = selectedTable as string;
+      const target = tables.find((t) => t.table_id === tableId);
+
+      s.start("正在检查工作表字段...");
+      try {
+        const fields = await setupApi.listFields(appToken, tableId);
+        s.stop("检查完成");
+        const fieldNames = new Set(fields.map((f) => f.field_name));
+        const missing = REQUIRED_FIELD_NAMES.filter((n) => !fieldNames.has(n));
+
+        if (missing.length > 0) {
+          p.log.warn(
+            `工作表「${target?.name}」缺少字段: ${missing.join(", ")}`,
+          );
+
+          const proceed = await p.confirm({
+            message: "字段不完整，是否在此多维表格中创建新工作表？",
+          });
+          if (p.isCancel(proceed) || !proceed) return null;
+
+          s.start("正在创建工作表...");
+          try {
+            const table = await setupApi.createTable(appToken, "任务");
+            tableId = table.table_id;
+            s.stop("工作表创建成功");
+          } catch (err) {
+            s.stop("创建失败");
+            p.log.error(`${err instanceof Error ? err.message : String(err)}`);
+            return null;
+          }
+        } else {
+          p.log.success(`工作表「${target?.name}」字段校验通过`);
+        }
+      } catch (err) {
+        s.stop("字段检查失败");
+        p.log.error(`${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      }
+    }
+
+    return {
+      config: { app_token: appToken, table_id: tableId },
+      credentials: {
+        app_id: result.appId as string,
+        app_secret: result.appSecret as string,
+      },
+    };
+  }
+
+  // --- Create new Bitable (original flow) ---
   let defaultTableId: string;
   let bitableUrl: string;
   s.start("Creating Bitable app...");
@@ -227,7 +418,7 @@ export async function stepTracker(deps: InitDeps): Promise<{
   s.start("Creating standard table...");
   try {
     const table = await setupApi.createTable(appToken, "任务");
-    newTableId = table.table_id;
+    tableId = table.table_id;
     s.stop("Table created");
   } catch (err) {
     s.stop("Failed to create table");
@@ -236,7 +427,7 @@ export async function stepTracker(deps: InitDeps): Promise<{
   }
 
   // Delete default empty table
-  if (defaultTableId && defaultTableId !== newTableId) {
+  if (defaultTableId && defaultTableId !== tableId) {
     s.start("Cleaning up default table...");
     try {
       await setupApi.deleteTable(appToken, defaultTableId);
@@ -283,7 +474,7 @@ export async function stepTracker(deps: InitDeps): Promise<{
   return {
     config: {
       app_token: appToken,
-      table_id: newTableId,
+      table_id: tableId,
     },
     credentials: {
       app_id: result.appId as string,
@@ -305,10 +496,10 @@ export async function stepAgent(
   }
 
   const approvalPolicy = await p.select({
-    message: "Approval policy",
+    message: "Agent 审批策略（控制 AI 执行命令时是否需要人工确认）",
     options: [
-      { value: "auto", label: "auto (recommended)" },
-      { value: "suggest", label: "suggest" },
+      { value: "auto", label: "auto（推荐）", hint: "自动执行，无需人工确认" },
+      { value: "suggest", label: "suggest", hint: "每次执行前询问你确认" },
     ],
   });
   if (p.isCancel(approvalPolicy)) return null;
@@ -326,11 +517,19 @@ export async function stepWorkspace(
   const p = deps.prompts;
 
   const sourceType = await p.select({
-    message: "Workspace source type",
+    message: "工作区来源类型（决定每个任务如何获取代码）",
     options: [
-      { value: "git-worktree", label: "Git worktree" },
-      { value: "git-clone", label: "Git clone" },
-      { value: "none", label: "None" },
+      {
+        value: "git-worktree",
+        label: "Git worktree",
+        hint: "从现有仓库创建 worktree，适合本地开发",
+      },
+      {
+        value: "git-clone",
+        label: "Git clone",
+        hint: "自动 clone 仓库，适合远程/CI 环境",
+      },
+      { value: "none", label: "无", hint: "不使用代码仓库" },
     ],
   });
   if (p.isCancel(sourceType)) return null;
@@ -358,17 +557,17 @@ export async function stepWorkspace(
     ];
   } else if (sourceType === "git-clone") {
     const url = await p.text({
-      message: "Repository URL",
+      message: "仓库地址（Git remote URL）",
       placeholder: "git@github.com:org/repo.git",
     });
     if (p.isCancel(url)) return null;
     const path = await p.text({
-      message: "Clone path name",
+      message: "Clone 后的目录名称（相对于工作区根目录）",
       defaultValue: "repo",
     });
     if (p.isCancel(path)) return null;
     const branch = await p.text({
-      message: "Branch (optional)",
+      message: "分支名（可选，默认使用默认分支）",
       placeholder: "main",
     });
     if (p.isCancel(branch)) return null;
@@ -395,7 +594,7 @@ export async function stepTemplate(deps: InitDeps): Promise<string | null> {
   }));
 
   const selected = await p.select({
-    message: "Prompt template",
+    message: "选择 Prompt 模板（Agent 每次执行任务时会使用该模板作为初始指令）",
     options: templates,
   });
   if (p.isCancel(selected)) return null;
@@ -452,7 +651,16 @@ export async function initCommand(
     resolve(deps.homedir(), ".open-symphony");
 
   console.log("");
-  p.intro("Symphony Setup Wizard");
+  p.intro("🎼 Symphony 配置向导");
+  p.note(
+    "本向导将引导你完成以下配置：\n\n" +
+      "  1. 飞书应用凭据 — 连接飞书多维表格作为任务追踪器\n" +
+      "  2. Agent 策略 — 控制 AI 的执行权限\n" +
+      "  3. 工作区 — 指定 Agent 的工作目录\n" +
+      "  4. Prompt 模板 — 定义 Agent 的初始指令\n\n" +
+      "配置完成后将生成 WORKFLOW.md 文件。",
+    "欢迎使用 Symphony",
+  );
 
   // Check existing WORKFLOW.md
   if (!(await checkExistingWorkflow(deps, targetPath))) {

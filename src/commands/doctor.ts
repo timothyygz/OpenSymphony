@@ -30,7 +30,7 @@ async function checkClaudeCli(): Promise<CheckResult> {
 async function checkWorkflowFile(path: string): Promise<{ config: ReturnType<typeof buildServiceConfig>; result: CheckResult } | { config: null; result: CheckResult }> {
   const filePath = resolveWorkflowPath(path);
   if (!existsSync(filePath)) {
-    return { config: null, result: { name: "WORKFLOW.md", pass: false, message: `Not found at ${filePath}. Run 'symphony init' to create one.` } };
+    return { config: null, result: { name: "WORKFLOW.md", pass: false, message: `Not found at ${filePath}. Run 'opensymphony init' to create one.` } };
   }
 
   try {
