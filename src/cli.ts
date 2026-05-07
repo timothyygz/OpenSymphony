@@ -1,47 +1,89 @@
 #!/usr/bin/env bun
 import { getCommand, getCommandNames } from "./commands/index.ts";
 
-const SUBCOMMANDS = new Set(["init", "doctor"]);
+const BINARY_NAME = "opensymphony";
 
-function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string; noTui: boolean } {
+const SUBCOMMANDS = new Set([
+  "init",
+  "doctor",
+  "version",
+  "tasks",
+  "task",
+  "status",
+  "config",
+]);
+
+function printHelp(): void {
+  console.log(`Usage: ${BINARY_NAME} <command> [options] [path]`);
+  console.log();
+  console.log("Commands:");
+  console.log("  init [path]            Interactive setup wizard");
+  console.log("  doctor [path]          System diagnostic");
+  console.log("  version                Show version");
+  console.log("  tasks [path]           List all tasks from kanban");
+  console.log("  task <id> [path]       Show task detail");
+  console.log("  status [path]          Kanban overview by state");
+  console.log("  config [path]          Show current workflow config");
+  console.log();
+  console.log("Options:");
+  console.log("  --no-tui               Run in headless mode (JSON logs to stdout)");
+  console.log("  --state <state>        Filter by state (tasks command)");
+  console.log("  --json                 Output as JSON");
+  console.log("  --help, -h             Show this help");
+  console.log();
+  console.log("When no command is given, starts the orchestrator service.");
+  console.log(`  ${BINARY_NAME} [path-to-WORKFLOW.md]`);
+}
+
+function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string; noTui: boolean; json: boolean; stateFilter?: string; positional: string[] } {
   if (args.includes("--help") || args.includes("-h")) {
-    console.log("Usage: symphony <command> [options] [path]");
-    console.log();
-    console.log("Commands:");
-    console.log("  init [path]        Interactive setup wizard");
-    console.log("  doctor [path]      System diagnostic");
-    console.log();
-    console.log("Options:");
-    console.log("  --no-tui           Run in headless mode (JSON logs to stdout)");
-    console.log("  --help, -h         Show this help");
-    console.log();
-    console.log("When no command is given, starts the orchestrator service.");
-    console.log("  symphony [path-to-WORKFLOW.md]");
+    printHelp();
     process.exit(0);
   }
   const noTui = args.includes("--no-tui");
+  const json = args.includes("--json");
   const positional = args.filter((a) => !a.startsWith("-"));
+
+  // Extract --state <value>
+  const stateIdx = args.indexOf("--state");
+  let stateFilter: string | undefined;
+  if (stateIdx !== -1 && args[stateIdx + 1]) {
+    stateFilter = args[stateIdx + 1];
+  }
+
   const first = positional[0];
   if (first && SUBCOMMANDS.has(first)) {
-    return { subcommand: first, workflowPath: positional[1], noTui };
+    // For commands like 'task <id>', the remaining positional after the subcommand
+    // may include an id arg plus an optional path
+    return { subcommand: first, workflowPath: undefined, noTui, json, stateFilter, positional: positional.slice(1) };
   }
-  return { workflowPath: positional[0], noTui };
+  return { workflowPath: first, noTui, json, positional: [] };
 }
 
 async function main() {
-  const { subcommand, workflowPath, noTui } = parseArgs(process.argv.slice(2));
+  const { subcommand, workflowPath, noTui, json, stateFilter, positional } = parseArgs(process.argv.slice(2));
 
   if (subcommand) {
     // Import command modules to trigger registration
     if (subcommand === "init") await import("./commands/init.ts");
-    if (subcommand === "doctor") await import("./commands/doctor.ts");
+    else if (subcommand === "doctor") await import("./commands/doctor.ts");
+    else if (subcommand === "version") await import("./commands/version.ts");
+    else if (subcommand === "tasks") await import("./commands/tasks.ts");
+    else if (subcommand === "task") await import("./commands/task.ts");
+    else if (subcommand === "status") await import("./commands/status.ts");
+    else if (subcommand === "config") await import("./commands/config.ts");
 
     const handler = getCommand(subcommand);
     if (!handler) {
       console.error(`Unknown command: ${subcommand}`);
       process.exit(1);
     }
-    const cmdArgs = process.argv.slice(2).filter((a) => a !== subcommand);
+    // Pass relevant args to the command handler
+    const cmdArgs = positional;
+    if (workflowPath) cmdArgs.push(workflowPath);
+    // Attach flags via env for commands to read
+    if (json) process.env.OPENSYMPHONY_JSON = "1";
+    if (stateFilter) process.env.OPENSYMPHONY_STATE_FILTER = stateFilter;
     await handler(cmdArgs);
     return;
   }
@@ -81,8 +123,8 @@ async function main() {
     if (err instanceof MissingWorkflowFileError) {
       console.error(`Workflow file not found: ${resolvedPath}`);
       console.error();
-      console.error("Run 'symphony init' to create one, or specify a path:");
-      console.error("  symphony /path/to/WORKFLOW.md");
+      console.error("Run 'opensymphony init' to create one, or specify a path:");
+      console.error("  opensymphony /path/to/WORKFLOW.md");
       process.exit(1);
     }
     throw err;
