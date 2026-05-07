@@ -150,9 +150,11 @@ async function main() {
     workflowDir: workflowDir,
   });
 
-  const { TokenLog } = await import("./metrics/token-log.ts");
-  const tokenLogPath = `${logDir}/.symphony-tokens.jsonl`;
-  const tokenLog = new TokenLog(tokenLogPath);
+  const { TokenStore } = await import("./metrics/token-store.ts");
+  const { homedir } = await import("node:os");
+  const { resolve: resolvePath } = await import("node:path");
+  const dbPath = resolvePath(homedir(), ".open-symphony", "symphony.db");
+  const tokenStore = new TokenStore(dbPath);
 
   const { ExecutionLog } = await import("./logging/execution-log.ts");
   const executionLogPath = `${logDir}/.symphony-execution.jsonl`;
@@ -165,7 +167,7 @@ async function main() {
     tracker,
     agent,
     workspaceManager,
-    tokenLog,
+    tokenStore,
     executionLog,
   });
 
@@ -176,7 +178,7 @@ async function main() {
     const trackerUrl = config.tracker.kind === "feishu_bitable" && config.tracker.app_token && config.tracker.table_id
       ? `https://mbyzmxekdm.feishu.cn/base/${config.tracker.app_token}?table=${config.tracker.table_id}`
       : null;
-    dashboard = new Dashboard(orchestrator, tokenLogPath, trackerUrl);
+    dashboard = new Dashboard(orchestrator, tokenStore, trackerUrl);
   }
 
   // Start workflow watcher
@@ -197,6 +199,7 @@ async function main() {
     logger.info("Shutting down...");
     watcher.stop();
     await orchestrator.stop();
+    tokenStore.close();
     process.exit(0);
   };
 

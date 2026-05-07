@@ -5,12 +5,14 @@ import type { OrchestratorState } from "./state.ts";
 import { isActiveState, isTerminalState, addRuntimeSeconds, addTokenUsage } from "./state.ts";
 import { scheduleRetry } from "./retry.ts";
 import { logger } from "../logging/logger.ts";
+import type { TokenStore } from "../metrics/token-store.ts";
 
 export interface ReconcilerDeps {
   state: OrchestratorState;
   config: ServiceConfig;
   tracker: TrackerAdapter;
   workspaceManager: WorkspaceManager;
+  tokenStore?: TokenStore;
 }
 
 export class Reconciler {
@@ -128,6 +130,18 @@ export class Reconciler {
 
   finalizeWorkerTokens(entry: RunningEntry): void {
     addTokenUsage(this.deps.state, entry);
+
+    // Persist token record to SQLite
+    this.deps.tokenStore?.append({
+      identifier: entry.identifier,
+      issueId: entry.issue.id,
+      inputTokens: entry.tokenUsage.inputTokens,
+      outputTokens: entry.tokenUsage.outputTokens,
+      totalTokens: entry.tokenUsage.totalTokens,
+      turns: entry.turnCount,
+      retryAttempt: entry.retryAttempt,
+      completedAt: new Date().toISOString(),
+    });
 
     logger.info(
       {

@@ -15,7 +15,7 @@ import { scheduleRetry } from "./retry.ts";
 import { validateDispatchConfig } from "../workflow/config.ts";
 import { logger } from "../logging/logger.ts";
 import type { ExecutionLog } from "../logging/execution-log.ts";
-import type { TokenLog } from "../metrics/token-log.ts";
+import type { TokenStore } from "../metrics/token-store.ts";
 import { EventProcessor } from "./event-processor.ts";
 import { Reconciler } from "./reconciler.ts";
 import { WorkerRunner } from "./worker-runner.ts";
@@ -26,7 +26,7 @@ export interface OrchestratorDeps {
   tracker: TrackerAdapter;
   agent: import("../adapters/agent/types.ts").AgentAdapter;
   workspaceManager: WorkspaceManager;
-  tokenLog?: TokenLog;
+  tokenStore?: TokenStore;
   executionLog?: ExecutionLog;
 }
 
@@ -59,6 +59,7 @@ export class Orchestrator {
         config: deps.config,
         tracker: deps.tracker,
         workspaceManager: deps.workspaceManager,
+        tokenStore: deps.tokenStore,
       },
       (issueId) => this.onRetryTimer(issueId),
     );
