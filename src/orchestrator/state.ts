@@ -64,3 +64,21 @@ export function effectiveSecondsRunning(state: OrchestratorState): number {
   );
   return ended + active;
 }
+
+export function effectiveTokenTotals(state: OrchestratorState): AggregateTotals {
+  const ended = state.aggregateTotals;
+  const active = [...state.running.values()].reduce(
+    (acc, r) => ({
+      inputTokens: acc.inputTokens + r.tokenUsage.inputTokens,
+      outputTokens: acc.outputTokens + r.tokenUsage.outputTokens,
+      totalTokens: acc.totalTokens + r.tokenUsage.totalTokens,
+    }),
+    { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+  );
+  return {
+    inputTokens: ended.inputTokens + active.inputTokens,
+    outputTokens: ended.outputTokens + active.outputTokens,
+    totalTokens: ended.totalTokens + active.totalTokens,
+    secondsRunning: ended.secondsRunning,
+  };
+}

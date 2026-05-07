@@ -8,6 +8,10 @@ tracker:
   description_field: "描述"
   priority_field: "优先级"
   labels_field: "标签"
+  tokens_field: "tokens消耗"
+  progress_field: "进度"
+  result_summary_field: "结果摘要"
+  join_command_field: "操作命令"
   active_states:
     - "待处理"
     - "进行中"

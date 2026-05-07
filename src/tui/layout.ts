@@ -3,6 +3,7 @@ import { displayWidth, padCell, truncate, formatCount, formatRuntime } from "./f
 import { humanizeEvent, dotColor, formatRateLimits } from "./events.ts";
 import type { Sparkline } from "./sparkline.ts";
 import type { OrchestratorState } from "../orchestrator/state.ts";
+import { effectiveTokenTotals } from "../orchestrator/state.ts";
 import type { RunningEntry, RetryEntry, HistoryStats, PeriodStats } from "../model/index.ts";
 
 const COL_ID = 10;
@@ -31,7 +32,7 @@ export function formatHeader(
   const agentCount = state.running.size;
   const maxAgents = state.maxConcurrentAgents;
   const completed = state.completed.size;
-  const totals = state.aggregateTotals;
+  const totals = effectiveTokenTotals(state);
   const currentTokens = totals.totalTokens;
 
   sparkline.sample(now, currentTokens);

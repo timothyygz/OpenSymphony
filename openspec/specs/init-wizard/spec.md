@@ -1,12 +1,22 @@
 ## ADDED Requirements
 
 ### Requirement: Interactive init wizard
-The system SHALL provide a `symphony init [path]` command that launches an interactive wizard to generate a WORKFLOW.md file. The wizard SHALL use `@clack/prompts` for all user interaction.
+The system SHALL provide a `symphony init [path]` command that launches an interactive wizard to generate a WORKFLOW.md file. The wizard SHALL use `@clack/prompts` for all user interaction. The wizard SHALL first prompt the user to select a tracker type before proceeding with tracker-specific setup.
 
 #### Scenario: Basic wizard flow
 - **WHEN** user runs `symphony init`
-- **THEN** the wizard sequentially collects: tracker config, agent config, workspace config, prompt template, credential storage preference
+- **THEN** the wizard sequentially collects: tracker type selection, tracker config (via tracker-specific setup), agent config, workspace config, prompt template, credential storage preference
 - **AND** writes a valid WORKFLOW.md to the current directory
+
+#### Scenario: Tracker type selection
+- **WHEN** user reaches the tracker step
+- **THEN** the wizard SHALL display available tracker kinds from the registry (e.g. "feishu_bitable", "gitlab_issues")
+- **AND** prompt the user to select one
+
+#### Scenario: Tracker-specific setup routing
+- **WHEN** user selects a tracker kind
+- **THEN** the wizard SHALL call the tracker's registered setup function
+- **AND** the setup function SHALL handle all tracker-specific configuration and return a config object
 
 #### Scenario: Custom output path
 - **WHEN** user runs `symphony init /path/to/config`
@@ -20,7 +30,7 @@ The system SHALL provide a `symphony init [path]` command that launches an inter
 The wizard SHALL guide users through configuring a Feishu Bitable tracker. Users SHALL only need to provide `app_id` and `app_secret`. The wizard SHALL auto-create a compliant Bitable table.
 
 #### Scenario: Auto-create Bitable table
-- **WHEN** user provides valid app_id and app_secret
+- **WHEN** user selects `feishu_bitable` and provides valid app_id and app_secret
 - **THEN** the wizard authenticates with Feishu, creates a new Bitable App, creates a table with 10 standard fields (编号/AutoNumber, 标题/Text, 状态/SingleSelect, 描述/Text, 优先级/SingleSelect, 标签/MultiSelect, tokens消耗/Number, 进度/Number+Progress, 结果摘要/Text, 操作命令/Text), deletes the default empty table, and returns the app_token, table_id, and Bitable URL
 
 #### Scenario: Invalid credentials
@@ -133,3 +143,24 @@ The generated WORKFLOW.md SHALL pass `validateDispatchConfig()` validation.
 #### Scenario: Valid output
 - **WHEN** WORKFLOW.md is written
 - **THEN** loading it with `loadWorkflow()` + `buildServiceConfig()` SHALL produce a valid ServiceConfig with no validation errors
+
+### Requirement: GitLab Issues tracker setup
+The wizard SHALL guide users through configuring a GitLab Issues tracker when `gitlab_issues` is selected.
+
+#### Scenario: GitLab credential collection
+- **WHEN** user selects `gitlab_issues`
+- **THEN** the wizard SHALL prompt for `gitlab_host` (default `https://gitlab.com`), `gitlab_token` (PAT), and `project_id`
+
+#### Scenario: GitLab connectivity test
+- **WHEN** credentials are provided
+- **THEN** the wizard SHALL test connectivity by calling `GET /projects/:id` with the token
+- **AND** display the project name on success
+
+#### Scenario: Label creation
+- **WHEN** the project is accessible
+- **THEN** the wizard SHALL offer to auto-create scoped labels (`symphony::Todo`, `symphony::In Progress`, etc.) in the project
+- **AND** prompt for active_states and terminal_states with sensible defaults
+
+#### Scenario: Invalid token
+- **WHEN** the PAT is invalid or lacks `api` scope
+- **THEN** the wizard SHALL display an error and allow retry
