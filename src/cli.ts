@@ -35,7 +35,12 @@ function printHelp(): void {
   console.log(`  ${BINARY_NAME} [path-to-WORKFLOW.md]`);
 }
 
-function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string; noTui: boolean; json: boolean; stateFilter?: string; positional: string[] } {
+function looksLikeCommand(arg: string): boolean {
+  // Heuristic: if it has no path separator and no dot, it's likely an intended command, not a file path
+  return !arg.includes("/") && !arg.includes(".");
+}
+
+function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string; unknownCommand?: string; noTui: boolean; json: boolean; stateFilter?: string; positional: string[] } {
   if (args.includes("--help") || args.includes("-h")) {
     printHelp();
     process.exit(0);
@@ -57,11 +62,22 @@ function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string
     // may include an id arg plus an optional path
     return { subcommand: first, workflowPath: undefined, noTui, json, stateFilter, positional: positional.slice(1) };
   }
+  if (first && looksLikeCommand(first)) {
+    // Looks like an intended command but not recognized
+    return { unknownCommand: first, noTui, json, positional: [] };
+  }
   return { workflowPath: first, noTui, json, positional: [] };
 }
 
 async function main() {
-  const { subcommand, workflowPath, noTui, json, stateFilter, positional } = parseArgs(process.argv.slice(2));
+  const { subcommand, workflowPath, unknownCommand, noTui, json, stateFilter, positional } = parseArgs(process.argv.slice(2));
+
+  if (unknownCommand) {
+    console.error(`Unknown command: ${unknownCommand}`);
+    console.error();
+    console.error(`Use '${BINARY_NAME} --help' to see available commands.`);
+    process.exit(1);
+  }
 
   if (subcommand) {
     // Import command modules to trigger registration
