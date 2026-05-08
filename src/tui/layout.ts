@@ -1,5 +1,5 @@
 import { ANSI, colorize } from "./renderer.ts";
-import { displayWidth, padCell, truncate, formatCount, formatRuntime } from "./format.ts";
+import { displayWidth, padCell, truncate, formatCount, formatRuntime, estimateCost, formatCost } from "./format.ts";
 import { humanizeEvent, dotColor, formatRateLimits } from "./events.ts";
 import type { Sparkline } from "./sparkline.ts";
 import type { OrchestratorState, CompletedEntry } from "../orchestrator/state.ts";
@@ -68,6 +68,7 @@ export function formatHeader(
       colorize(" | ", ANSI.gray) +
       colorize(`total ${formatCount(totals.totalTokens)}`, ANSI.yellow),
     colorize("│ Rate Limits: ", ANSI.bold) + colorize(formatRateLimits(state.rateLimits), ANSI.cyan),
+    colorize("│ Est. Cost: ", ANSI.bold) + colorize(formatCost(estimateCost(totals.inputTokens, totals.outputTokens)), ANSI.yellow),
     colorize("│ Next refresh: ", ANSI.bold) + nextRefresh,
     ...(trackerUrl
       ? [colorize("│ Tracker: ", ANSI.bold) + colorize(trackerUrl, ANSI.cyan)]
@@ -95,7 +96,7 @@ export function formatHistory(history: HistoryStats): string[] {
   ];
 }
 
-export function formatRunningTable(state: OrchestratorState): string[] {
+export function formatRunningTable(state: OrchestratorState, maxHeight?: number): string[] {
   const running = [...state.running.values()].sort(
     (a, b) => a.identifier.localeCompare(b.identifier),
   );
@@ -124,8 +125,20 @@ export function formatRunningTable(state: OrchestratorState): string[] {
     return lines;
   }
 
-  for (const entry of running) {
+  const chromeLines = 4;
+  const available = maxHeight != null && maxHeight > 0
+    ? Math.max(1, maxHeight - chromeLines)
+    : running.length;
+
+  const visible = running.slice(0, available);
+  const overflow = running.length - visible.length;
+
+  for (const entry of visible) {
     lines.push(formatRunningRow(entry, ew));
+  }
+
+  if (overflow > 0) {
+    lines.push("│ " + colorize(`  ... +${overflow} more`, ANSI.dim));
   }
 
   return lines;
@@ -169,6 +182,32 @@ function progressBar(turns: number, width: number): string {
   if (turns <= 0) return "";
   const filled = Math.min(turns, width);
   return PROGRESS_CHARS[1]!.repeat(filled) + PROGRESS_CHARS[0]!.repeat(Math.max(0, width - filled));
+}
+
+export function formatCompactHeader(
+  state: OrchestratorState,
+  sparkline: Sparkline,
+  now: number,
+): string[] {
+  const agentCount = state.running.size;
+  const maxAgents = state.maxConcurrentAgents;
+  const completed = state.completed.size;
+  const totals = effectiveTokenTotals(state);
+  const tps = sparkline.tps(now, totals.totalTokens);
+  const runtime = formatRuntime(totals.secondsRunning);
+
+  const line = colorize("╭─ ", ANSI.bold) +
+    colorize(`${agentCount}/${maxAgents}`, ANSI.green) +
+    colorize(" agents ", ANSI.gray) +
+    colorize(`${completed}`, ANSI.cyan) +
+    colorize(" done │ ", ANSI.gray) +
+    colorize(`${formatCount(Math.floor(tps))} tps`, ANSI.cyan) +
+    colorize(" │ ", ANSI.gray) +
+    colorize(runtime, ANSI.magenta) +
+    colorize(" │ ", ANSI.gray) +
+    colorize(`tokens ${formatCount(totals.totalTokens)}`, ANSI.yellow);
+
+  return [line];
 }
 
 export function formatBackoffQueue(state: OrchestratorState): string[] {

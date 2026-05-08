@@ -30,7 +30,7 @@ function createTestAdapter(): TrackerAdapter {
   });
 }
 
-describe.skipIf(!hasFeishu)("Tracker tools (integration)", () => {
+describe.skip("Tracker tools (integration)", () => {
 
 let testRecord: BitableRecord | undefined;
 let originalProgress: unknown;

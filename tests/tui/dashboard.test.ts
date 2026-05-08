@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { formatRuntime, formatCount, displayWidth, padCell, truncate } from "../../src/tui/format.ts";
+import { formatRuntime, formatCount, displayWidth, padCell, truncate, estimateCost, formatCost } from "../../src/tui/format.ts";
 
 describe("formatRuntime - enhanced", () => {
   test("formats seconds only for under a minute", () => {
@@ -58,5 +58,44 @@ describe("formatCount", () => {
 
   test("handles undefined", () => {
     expect(formatCount(undefined)).toBe("0");
+  });
+});
+
+describe("estimateCost", () => {
+  test("returns 0 for zero tokens", () => {
+    expect(estimateCost(0, 0)).toBe(0);
+  });
+
+  test("calculates cost for input tokens only", () => {
+    const cost = estimateCost(1_000_000, 0);
+    expect(cost).toBeCloseTo(3, 4);
+  });
+
+  test("calculates cost for output tokens only", () => {
+    const cost = estimateCost(0, 1_000_000);
+    expect(cost).toBeCloseTo(15, 4);
+  });
+
+  test("calculates combined cost", () => {
+    const cost = estimateCost(500_000, 200_000);
+    expect(cost).toBeCloseTo(4.5, 4);
+  });
+});
+
+describe("formatCost", () => {
+  test("formats small costs with 4 decimal places", () => {
+    expect(formatCost(0.001)).toBe("$0.0010");
+  });
+
+  test("formats sub-dollar costs with 3 decimal places", () => {
+    expect(formatCost(0.05)).toBe("$0.050");
+  });
+
+  test("formats dollar-range costs with 2 decimal places", () => {
+    expect(formatCost(1.23)).toBe("$1.23");
+  });
+
+  test("formats larger costs", () => {
+    expect(formatCost(42.567)).toBe("$42.57");
   });
 });

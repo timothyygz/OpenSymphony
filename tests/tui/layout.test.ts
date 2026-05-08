@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
-import { formatRunningTable, formatBackoffQueue, formatCompletedTable } from "../../src/tui/layout.ts";
+import { formatRunningTable, formatBackoffQueue, formatCompletedTable, formatCompactHeader } from "../../src/tui/layout.ts";
 import { ANSI, colorize } from "../../src/tui/renderer.ts";
+import { Sparkline } from "../../src/tui/sparkline.ts";
 import type { OrchestratorState, CompletedEntry } from "../../src/orchestrator/state.ts";
 import type { RunningEntry, RetryEntry } from "../../src/model/index.ts";
 
@@ -169,5 +170,70 @@ describe("formatCompletedTable", () => {
     const lines = formatCompletedTable(state);
     expect(lines.some((l) => l.includes("MT-001"))).toBe(true);
     expect(lines.some((l) => l.includes("MT-002"))).toBe(true);
+  });
+});
+
+describe("formatRunningTable overflow", () => {
+  function makeNEntries(n: number): Map<string, RunningEntry> {
+    const map = new Map<string, RunningEntry>();
+    for (let i = 0; i < n; i++) {
+      const id = String(i).padStart(3, "0");
+      map.set(`issue-${id}`, makeRunningEntry({
+        identifier: `MT-${id}`,
+        issue: { id: `issue-${id}`, title: `Task ${id}`, state: "in_progress" },
+      }));
+    }
+    return map;
+  }
+
+  test("shows all agents when no height constraint", () => {
+    const state = makeState({ running: makeNEntries(5) });
+    const lines = formatRunningTable(state);
+    expect(lines.some((l) => l.includes("MT-000"))).toBe(true);
+    expect(lines.some((l) => l.includes("MT-004"))).toBe(true);
+    expect(lines.some((l) => l.includes("more"))).toBe(false);
+  });
+
+  test("truncates when maxHeight is smaller than agent count", () => {
+    const state = makeState({ running: makeNEntries(10) });
+    const lines = formatRunningTable(state, 7);
+    // chromeLines=4, so available=7-4=3 agents visible, overflow=10-3=7
+    expect(lines.some((l) => l.includes("+7 more"))).toBe(true);
+  });
+
+  test("shows at least 1 agent even with minimal height", () => {
+    const state = makeState({ running: makeNEntries(5) });
+    const lines = formatRunningTable(state, 5);
+    expect(lines.some((l) => l.includes("MT-"))).toBe(true);
+    expect(lines.some((l) => l.includes("more"))).toBe(true);
+  });
+});
+
+describe("formatCompactHeader", () => {
+  test("renders a single-line compact header", () => {
+    const state = makeState({
+      running: new Map([["issue-1", makeRunningEntry()]]),
+      maxConcurrentAgents: 5,
+      completed: new Set(["issue-old"]),
+      aggregateTotals: { inputTokens: 1000, outputTokens: 500, totalTokens: 1500, secondsRunning: 300 },
+    });
+    const sparkline = new Sparkline();
+    const lines = formatCompactHeader(state, sparkline, Date.now());
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("1/5");
+    expect(lines[0]).toContain("agents");
+    expect(lines[0]).toContain("done");
+    expect(lines[0]).toContain("tps");
+    expect(lines[0]).toContain("tokens");
+  });
+
+  test("shows zero agents", () => {
+    const state = makeState();
+    const sparkline = new Sparkline();
+    const lines = formatCompactHeader(state, sparkline, Date.now());
+
+    expect(lines[0]).toContain("0/5");
+    expect(lines[0]).toContain("done");
   });
 });
