@@ -44,7 +44,14 @@ export function formatCount(value: number | null | undefined): string {
 }
 
 export function formatRuntime(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60);
   const s = Math.floor(totalSeconds % 60);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const m = totalMinutes % 60;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const h = totalHours % 24;
+  const d = Math.floor(totalHours / 24);
+
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
   return `${m}m ${s}s`;
 }

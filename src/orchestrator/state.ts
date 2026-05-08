@@ -1,5 +1,14 @@
 import type { Issue, RunningEntry, RetryEntry, AggregateTotals } from "../model/index.ts";
 
+export interface CompletedEntry {
+  identifier: string;
+  title: string;
+  totalTokens: number;
+  turns: number;
+  runtimeSeconds: number;
+  completedAt: Date;
+}
+
 export interface OrchestratorState {
   pollIntervalMs: number;
   maxConcurrentAgents: number;
@@ -7,6 +16,7 @@ export interface OrchestratorState {
   claimed: Set<string>;
   retryAttempts: Map<string, RetryEntry>;
   completed: Set<string>;
+  recentCompleted: CompletedEntry[];
   aggregateTotals: AggregateTotals;
   rateLimits: unknown;
   nextTickAt: number | null;
@@ -20,6 +30,7 @@ export function createInitialState(): OrchestratorState {
     claimed: new Set(),
     retryAttempts: new Map(),
     completed: new Set(),
+    recentCompleted: [],
     aggregateTotals: {
       inputTokens: 0,
       outputTokens: 0,

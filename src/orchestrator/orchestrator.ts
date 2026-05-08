@@ -301,6 +301,17 @@ export class Orchestrator {
         "Worker exited normally, agent should have updated tracker",
       );
       this.state.completed.add(issueId);
+      this.state.recentCompleted.push({
+        identifier: entry.identifier,
+        title: entry.issue.title ?? "unknown",
+        totalTokens: entry.tokenUsage.totalTokens,
+        turns: entry.turnCount,
+        runtimeSeconds: (Date.now() - entry.startedAt.getTime()) / 1000,
+        completedAt: new Date(),
+      });
+      if (this.state.recentCompleted.length > 10) {
+        this.state.recentCompleted.shift();
+      }
     } else {
       // Reset to active state so retry can re-dispatch
       try {
