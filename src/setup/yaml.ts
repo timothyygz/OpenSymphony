@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { WizardResult } from "./types.ts";
 
 // --- Constants ---
 
 export const TEMPLATE_PRESETS = [
-  { name: "基础模板 (English)" as const, file: "basic.md" },
-  { name: "中文模板 (Chinese)" as const, file: "chinese.md" },
-  { name: "空模板 (Empty)" as const, file: "empty.md" },
+  { name: "英文模板 (English)" as const, file: "basic.md", description: "英文基础模板：包含完整的工单处理指引，适合通用场景" },
+  { name: "中文模板 (Chinese)" as const, file: "chinese.md", description: "中文基础模板：与英文模板功能一致，使用中文提示" },
+  { name: "空模板 (Empty)" as const, file: "empty.md", description: "仅包含工单标题和描述，可自由定制" },
 ];
 
 // --- Pure functions ---
@@ -97,4 +98,34 @@ export function buildWorkflowYaml(result: WizardResult): string {
   yaml = `tracker:\n${trackerYaml}\n${yaml}`;
 
   return `---\n${yaml}\n---\n\n${result.promptTemplate}\n`;
+}
+
+export interface ParsedWorkflow {
+  tracker: Record<string, unknown>;
+  workspace: Record<string, unknown>;
+  agent: Record<string, unknown>;
+  promptTemplate: string;
+}
+
+export function parseWorkflowFile(content: string): ParsedWorkflow | null {
+  // WORKFLOW.md format: "---\nyaml\n---\ntemplate"
+  const yamlMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!yamlMatch) return null;
+
+  try {
+    const parsed = parseYaml(yamlMatch[1]!) as Record<string, unknown>;
+    if (!parsed) return null;
+
+    // Template is everything after the second ---
+    const templatePart = content.slice(content.indexOf("---", 3) + 3).trimStart();
+
+    return {
+      tracker: (parsed.tracker as Record<string, unknown>) ?? {},
+      workspace: (parsed.workspace as Record<string, unknown>) ?? {},
+      agent: (parsed.agent as Record<string, unknown>) ?? {},
+      promptTemplate: templatePart || "",
+    };
+  } catch {
+    return null;
+  }
 }

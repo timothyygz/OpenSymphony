@@ -3,9 +3,10 @@ import {
   stepTracker,
   stepWorkspace,
 } from "../../src/setup/steps.ts";
-import { initCommand } from "../../src/setup/wizard.ts";
+import { initCommand, progressBar, TOTAL_STEPS } from "../../src/setup/wizard.ts";
 import type { InitDeps, SetupApi, Prompts } from "../../src/setup/types.ts";
 import { CANCEL } from "../__mocks__/clack-prompts.ts";
+import { join } from "node:path";
 
 /**
  * Enhanced mock that captures prompt arguments for verifying messages.
@@ -214,8 +215,9 @@ describe("initCommand intro message", () => {
       homedir: () => "/tmp/test-home",
     };
     mock.enqueue(
-      "cli_test_app", "test_secret", "",
-      "none",
+      "feishu_bitable",
+      "cli_test_app", "test_secret",
+      "new", "",
       "basic.md",
     );
 
@@ -229,7 +231,77 @@ describe("initCommand intro message", () => {
     );
     expect(welcomeNote).toBeDefined();
     expect(welcomeNote!.content).toContain("追踪器");
-    expect(welcomeNote!.content).toContain("工作区");
     expect(welcomeNote!.content).toContain("Prompt");
+  });
+});
+
+// --- Progress bar ---
+
+describe("progressBar function", () => {
+  test("generates correct progress bar for step 1 of 2", () => {
+    expect(progressBar(1, 2)).toBe("[█░] 1/2");
+  });
+
+  test("generates correct progress bar for step 2 of 2", () => {
+    expect(progressBar(2, 2)).toBe("[██] 2/2");
+  });
+
+  test("TOTAL_STEPS is 2 (tracker + template)", () => {
+    expect(TOTAL_STEPS).toBe(2);
+  });
+});
+
+// --- Wizard skips workspace step ---
+
+describe("wizard skips workspace step", () => {
+  test("welcome note mentions workspace defaults (no workspace step)", async () => {
+    const mock = createCapturingMock();
+    const deps: InitDeps = {
+      prompts: mock.prompts,
+      createSetupApi: () => createMockSetupApi(),
+      checkClaudeCli: async () => true,
+      homedir: () => "/tmp/test-home",
+    };
+    mock.enqueue(
+      "feishu_bitable",
+      "cli_test_app", "test_secret",
+      "new", "",
+      "basic.md",
+    );
+
+    await initCommand(["/tmp/test-ws"], deps);
+
+    const welcomeNote = mock.capturedNotes.find((n) =>
+      n.title.includes("欢迎"),
+    );
+    expect(welcomeNote).toBeDefined();
+    // Should mention workspace defaults
+    expect(welcomeNote!.content).toContain(".open-symphony/workspace");
+    // Should not mention workspace as a step
+    expect(welcomeNote!.content).not.toContain("工作区 —");
+  });
+
+  test("no workspace prompts during wizard flow", async () => {
+    const mock = createCapturingMock();
+    const deps: InitDeps = {
+      prompts: mock.prompts,
+      createSetupApi: () => createMockSetupApi(),
+      checkClaudeCli: async () => true,
+      homedir: () => "/tmp/test-home",
+    };
+    mock.enqueue(
+      "feishu_bitable",
+      "cli_test_app", "test_secret",
+      "new", "",
+      "basic.md",
+    );
+
+    await initCommand(["/tmp/test-ws"], deps);
+
+    // Should not have any workspace-related prompts
+    const workspaceSelect = mock.capturedSelects.find((s) =>
+      s.message.includes("工作区来源"),
+    );
+    expect(workspaceSelect).toBeUndefined();
   });
 });
