@@ -1,5 +1,5 @@
 import { enterAltScreen, exitAltScreen, drawLines, ANSI, colorize } from "./renderer.ts";
-import { formatHeader, formatHistory, formatRunningTable, formatBackoffQueue, formatCompletedTable } from "./layout.ts";
+import { formatHeader, formatHistory, formatRunningTable, formatBackoffQueue, formatCompletedTable, formatCompactHeader } from "./layout.ts";
 import { Sparkline } from "./sparkline.ts";
 import type { TokenStore } from "../metrics/token-store.ts";
 import type { Orchestrator } from "../orchestrator/orchestrator.ts";
@@ -19,6 +19,7 @@ export class Dashboard {
   private lastRenderAt = 0;
   private readonly minIdleRerenderMs = 1000;
   private paused = false;
+  private compact = false;
   private readonly exitCallback: (() => void) | null;
 
   private readonly tokenStore: TokenStore;
@@ -86,6 +87,9 @@ export class Dashboard {
     } else if (key === "p") {
       this.paused = !this.paused;
       this.forceRender();
+    } else if (key === "c") {
+      this.compact = !this.compact;
+      this.forceRender();
     }
   }
 
@@ -103,26 +107,31 @@ export class Dashboard {
 
     const history = this.getHistory(now);
 
-    const header = formatHeader(state, this.sparkline, now, this.trackerUrl);
-    const historyLines = formatHistory(history);
-    const table = formatRunningTable(state);
-    const backoff = formatBackoffQueue(state);
-    const completed = formatCompletedTable(state);
+    let lines: string[];
+    if (this.compact) {
+      const compactHeader = formatCompactHeader(state, this.sparkline, now);
+      lines = [
+        ...compactHeader,
+        colorize("╰─", ANSI.bold) + this.statusHints(),
+      ];
+    } else {
+      const header = formatHeader(state, this.sparkline, now, this.trackerUrl);
+      const historyLines = formatHistory(history);
+      const table = formatRunningTable(state, process.stdout.rows);
+      const backoff = formatBackoffQueue(state);
+      const completed = formatCompletedTable(state);
 
-    const pauseHint = this.paused
-      ? colorize(" PAUSED", ANSI.yellow)
-      : "";
-
-    const lines = [
-      ...header,
-      ...historyLines,
-      ...table,
-      "",
-      ...backoff,
-      ...completed,
-      "",
-      colorize("╰─", ANSI.bold) + pauseHint + colorize("  [q] quit  [p] pause/resume", ANSI.dim),
-    ];
+      lines = [
+        ...header,
+        ...historyLines,
+        ...table,
+        "",
+        ...backoff,
+        ...completed,
+        "",
+        colorize("╰─", ANSI.bold) + this.statusHints(),
+      ];
+    }
 
     drawLines(lines);
   }
@@ -144,6 +153,12 @@ export class Dashboard {
 
   private idleRerenderDue(now: number): boolean {
     return now - this.lastRenderAt >= this.minIdleRerenderMs;
+  }
+
+  private statusHints(): string {
+    const pauseHint = this.paused ? colorize(" PAUSED", ANSI.yellow) : "";
+    const modeHint = this.compact ? colorize(" [compact]", ANSI.cyan) : "";
+    return pauseHint + modeHint + colorize("  [q] quit  [p] pause  [c] compact", ANSI.dim);
   }
 }
 
