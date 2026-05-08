@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { getCommand, getCommandNames } from "./commands/index.ts";
+import { getCommand } from "./commands/index.ts";
 
 const BINARY_NAME = "opensymphony";
 
@@ -12,6 +12,36 @@ const SUBCOMMANDS = new Set([
   "status",
   "config",
 ]);
+
+const COMMAND_MODULES: Record<string, () => Promise<void>> = {
+  init: () => import("./commands/init.ts"),
+  doctor: () => import("./commands/doctor.ts"),
+  version: () => import("./commands/version.ts"),
+  tasks: () => import("./commands/tasks.ts"),
+  task: () => import("./commands/task.ts"),
+  status: () => import("./commands/status.ts"),
+  config: () => import("./commands/config.ts"),
+};
+
+// --- Types ---
+
+export interface ParsedArgs {
+  subcommand?: string;
+  workflowPath?: string;
+  unknownCommand?: string;
+  noTui: boolean;
+  json: boolean;
+  stateFilter?: string;
+  positional: string[];
+  help: boolean;
+}
+
+interface DashboardLike {
+  start(): void;
+  stop(): void;
+}
+
+// --- Helpers ---
 
 function printHelp(): void {
   console.log(`Usage: ${BINARY_NAME} <command> [options] [path]`);
@@ -36,74 +66,61 @@ function printHelp(): void {
 }
 
 function looksLikeCommand(arg: string): boolean {
-  // Heuristic: if it has no path separator and no dot, it's likely an intended command, not a file path
   return !arg.includes("/") && !arg.includes(".");
 }
 
-function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string; unknownCommand?: string; noTui: boolean; json: boolean; stateFilter?: string; positional: string[] } {
+export function parseArgs(args: string[]): ParsedArgs {
   if (args.includes("--help") || args.includes("-h")) {
-    printHelp();
-    process.exit(0);
+    return { noTui: false, json: false, positional: [], help: true };
   }
+
   const noTui = args.includes("--no-tui");
   const json = args.includes("--json");
   const positional = args.filter((a) => !a.startsWith("-"));
 
-  // Extract --state <value>
   const stateIdx = args.indexOf("--state");
-  let stateFilter: string | undefined;
-  if (stateIdx !== -1 && args[stateIdx + 1]) {
-    stateFilter = args[stateIdx + 1];
-  }
+  const stateFilter = stateIdx !== -1 && args[stateIdx + 1]
+    ? args[stateIdx + 1]
+    : undefined;
 
   const first = positional[0];
   if (first && SUBCOMMANDS.has(first)) {
-    // For commands like 'task <id>', the remaining positional after the subcommand
-    // may include an id arg plus an optional path
-    return { subcommand: first, workflowPath: undefined, noTui, json, stateFilter, positional: positional.slice(1) };
+    return { subcommand: first, noTui, json, stateFilter, positional: positional.slice(1), help: false };
   }
   if (first && looksLikeCommand(first)) {
-    // Looks like an intended command but not recognized
-    return { unknownCommand: first, noTui, json, positional: [] };
+    return { unknownCommand: first, noTui, json, positional: [], help: false };
   }
-  return { workflowPath: first, noTui, json, positional: [] };
+  return { workflowPath: first, noTui, json, positional: [], help: false };
 }
 
-async function main() {
-  const { subcommand, workflowPath, unknownCommand, noTui, json, stateFilter, positional } = parseArgs(process.argv.slice(2));
+// --- Subcommand handling ---
 
-  if (unknownCommand) {
-    console.error(`Unknown command: ${unknownCommand}`);
-    console.error();
-    console.error(`Use '${BINARY_NAME} --help' to see available commands.`);
+async function handleSubcommand(
+  subcommand: string,
+  positional: string[],
+  flags: { json: boolean; stateFilter?: string; workflowPath?: string },
+): Promise<void> {
+  const loader = COMMAND_MODULES[subcommand];
+  if (loader) {
+    await loader();
+  }
+
+  const handler = getCommand(subcommand);
+  if (!handler) {
+    console.error(`Unknown command: ${subcommand}`);
     process.exit(1);
   }
 
-  if (subcommand) {
-    // Import command modules to trigger registration
-    if (subcommand === "init") await import("./commands/init.ts");
-    else if (subcommand === "doctor") await import("./commands/doctor.ts");
-    else if (subcommand === "version") await import("./commands/version.ts");
-    else if (subcommand === "tasks") await import("./commands/tasks.ts");
-    else if (subcommand === "task") await import("./commands/task.ts");
-    else if (subcommand === "status") await import("./commands/status.ts");
-    else if (subcommand === "config") await import("./commands/config.ts");
+  const cmdArgs = [...positional];
+  if (flags.workflowPath) cmdArgs.push(flags.workflowPath);
+  if (flags.json) process.env.OPENSYMPHONY_JSON = "1";
+  if (flags.stateFilter) process.env.OPENSYMPHONY_STATE_FILTER = flags.stateFilter;
+  await handler(cmdArgs);
+}
 
-    const handler = getCommand(subcommand);
-    if (!handler) {
-      console.error(`Unknown command: ${subcommand}`);
-      process.exit(1);
-    }
-    // Pass relevant args to the command handler
-    const cmdArgs = positional;
-    if (workflowPath) cmdArgs.push(workflowPath);
-    // Attach flags via env for commands to read
-    if (json) process.env.OPENSYMPHONY_JSON = "1";
-    if (stateFilter) process.env.OPENSYMPHONY_STATE_FILTER = stateFilter;
-    await handler(cmdArgs);
-    return;
-  }
+// --- Orchestrator startup ---
 
+async function startOrchestrator(workflowPath: string | undefined, noTui: boolean): Promise<void> {
   const useTui = !noTui && process.stdout.isTTY && process.env.TERM !== "dumb";
   if (useTui) {
     process.env.SYMPHONY_LOG_DEST = "stderr";
@@ -169,12 +186,10 @@ async function main() {
 
   const { TokenStore } = await import("./metrics/token-store.ts");
   const { symphonyDb } = await import("./paths.ts");
-  const dbPath = symphonyDb();
-  const tokenStore = new TokenStore(dbPath);
+  const tokenStore = new TokenStore(symphonyDb());
 
   const { ExecutionLog } = await import("./logging/execution-log.ts");
-  const executionLogPath = `${logDir}/.symphony-execution.jsonl`;
-  const executionLog = new ExecutionLog(executionLogPath);
+  const executionLog = new ExecutionLog(`${logDir}/.symphony-execution.jsonl`);
 
   // Create orchestrator
   const orchestrator = new Orchestrator({
@@ -188,7 +203,7 @@ async function main() {
   });
 
   // Dashboard (TUI mode)
-  let dashboard: { start(): void; stop(): void } | null = null;
+  let dashboard: DashboardLike | null = null;
   if (useTui) {
     const { Dashboard } = await import("./tui/dashboard.ts");
     const trackerUrl = tracker.getDashboardUrl?.() ?? null;
@@ -229,7 +244,50 @@ async function main() {
   logger.info("Symphony service started");
 }
 
+// --- Entry point ---
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (args.unknownCommand) {
+    console.error(`Unknown command: ${args.unknownCommand}`);
+    console.error();
+    console.error(`Use '${BINARY_NAME} --help' to see available commands.`);
+    process.exit(1);
+  }
+
+  if (args.subcommand) {
+    await handleSubcommand(args.subcommand, args.positional, {
+      json: args.json,
+      stateFilter: args.stateFilter,
+      workflowPath: args.workflowPath,
+    });
+    return;
+  }
+
+  await startOrchestrator(args.workflowPath, args.noTui);
+}
+
+export function formatError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.stack ?? err.message;
+  }
+  if (typeof err === "string") {
+    return err;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  console.error("Fatal error:", formatError(err));
   process.exit(1);
 });
