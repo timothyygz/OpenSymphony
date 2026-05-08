@@ -55,3 +55,16 @@ export function formatRuntime(totalSeconds: number): string {
   if (h > 0) return `${h}h ${m}m ${s}s`;
   return `${m}m ${s}s`;
 }
+
+const COST_PER_MILLION_INPUT = 3;
+const COST_PER_MILLION_OUTPUT = 15;
+
+export function estimateCost(inputTokens: number, outputTokens: number): number {
+  return (inputTokens * COST_PER_MILLION_INPUT + outputTokens * COST_PER_MILLION_OUTPUT) / 1_000_000;
+}
+
+export function formatCost(cost: number): string {
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  if (cost < 1) return `$${cost.toFixed(3)}`;
+  return `$${cost.toFixed(2)}`;
+}
