@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import { homedir } from "node:os";
 import { FeishuAuth } from "../adapters/tracker/feishu-bitable/auth.ts";
 import { FeishuBitableSetupApi } from "../adapters/tracker/feishu-bitable/setup-api.ts";
-import { initCommand, type InitDeps } from "./init-core.ts";
+import { initCommand, type InitDeps } from "../setup/wizard.ts";
 import { registerCommand } from "./index.ts";
 
 const deps: InitDeps = {

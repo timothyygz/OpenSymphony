@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
+import { symphonySettings } from "../paths.ts";
 import { serviceConfigSchema, type ServiceConfig } from "../model/index.ts";
 import { ConfigValidationError } from "../errors/errors.ts";
 import { logger } from "../logging/logger.ts";
@@ -22,7 +23,7 @@ export function resetGlobalSettingsCache(): void {
 function loadGlobalSettings(): GlobalSettings {
   if (_cachedSettings !== null) return _cachedSettings;
   const settingsPath = process.env.SYMPHONY_SETTINGS_PATH
-    ?? resolve(homedir(), ".open-symphony", "settings.json");
+    ?? symphonySettings();
   if (!existsSync(settingsPath)) {
     _cachedSettings = emptySettings;
     return _cachedSettings;

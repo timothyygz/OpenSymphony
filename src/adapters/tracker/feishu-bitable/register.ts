@@ -1,5 +1,5 @@
 import { registerTracker } from "../registry.ts";
-import type { TrackerSetupFn } from "../registry.ts";
+import type { TrackerSetupFn } from "../../setup/types.ts";
 import { createFeishuBitableAdapter } from "./adapter.ts";
 import { FeishuAuth } from "./auth.ts";
 import { FeishuBitableSetupApi, STANDARD_FIELDS } from "./setup-api.ts";

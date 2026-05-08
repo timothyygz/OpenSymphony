@@ -3,11 +3,9 @@ import {
   stepTracker,
   stepAgent,
   stepWorkspace,
-  initCommand,
-  type InitDeps,
-  type SetupApi,
-  type Prompts,
-} from "../../src/commands/init-core.ts";
+} from "../../src/setup/steps.ts";
+import { initCommand } from "../../src/setup/wizard.ts";
+import type { InitDeps, SetupApi, Prompts } from "../../src/setup/types.ts";
 import { CANCEL } from "../__mocks__/clack-prompts.ts";
 
 /**
@@ -206,7 +204,7 @@ describe("stepAgent prompt messages", () => {
 // --- stepWorkspace prompt messages ---
 
 describe("stepWorkspace prompt messages", () => {
-  test("workspace root message explains the directory purpose", async () => {
+  test("workspace root is hardcoded when source type is none", async () => {
     const mock = createCapturingMock();
     const deps: InitDeps = {
       prompts: mock.prompts,
@@ -214,15 +212,13 @@ describe("stepWorkspace prompt messages", () => {
       checkClaudeCli: async () => true,
       homedir: () => "/tmp/test-home",
     };
-    mock.enqueue("none", "~/.open-symphony/workspace");
+    mock.enqueue("none");
 
-    await stepWorkspace(deps);
+    const result = await stepWorkspace(deps);
 
-    const rootPrompt = mock.capturedTexts.find((t) =>
-      t.message.includes("根目录"),
-    );
-    expect(rootPrompt).toBeDefined();
-    expect(rootPrompt!.message).toContain("子目录");
+    // No text prompts — root is hardcoded
+    expect(mock.capturedTexts.length).toBe(0);
+    expect(result).toEqual({ root: "~/.open-symphony/workspace" });
   });
 
   test("source type options have hints explaining each type", async () => {

@@ -1,5 +1,6 @@
 import { test, describe, expect } from "bun:test";
-import { objectToYaml, scalarYaml, buildWorkflowYaml, type WizardResult } from "../../src/commands/init-core.ts";
+import { objectToYaml, scalarYaml, buildWorkflowYaml } from "../../src/setup/yaml.ts";
+import type { WizardResult } from "../../src/setup/types.ts";
 
 describe("scalarYaml", () => {
   test("passes through plain strings", () => {

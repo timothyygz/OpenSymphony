@@ -6,10 +6,9 @@ import {
   stepWorkspace,
   stepTemplate,
   checkExistingWorkflow,
-  parseBitableUrl,
-  type InitDeps,
-  type SetupApi,
-} from "../../src/commands/init-core.ts";
+} from "../../src/setup/steps.ts";
+import { parseBitableUrl } from "../../src/setup/url.ts";
+import type { InitDeps, SetupApi } from "../../src/setup/types.ts";
 import { STANDARD_FIELDS } from "../../src/adapters/tracker/feishu-bitable/setup-api.ts";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";

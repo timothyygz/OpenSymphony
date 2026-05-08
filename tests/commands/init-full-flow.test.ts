@@ -1,6 +1,7 @@
 import { test, describe, expect, beforeEach, afterEach } from "bun:test";
 import { createMockPrompts, CANCEL } from "../__mocks__/clack-prompts.ts";
-import { initCommand, type InitDeps, type SetupApi } from "../../src/commands/init-core.ts";
+import { initCommand } from "../../src/setup/wizard.ts";
+import type { InitDeps, SetupApi } from "../../src/setup/types.ts";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

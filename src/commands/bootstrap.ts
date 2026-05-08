@@ -36,6 +36,7 @@ export async function bootstrapTracker(args: string[]): Promise<BootstrapResult>
 
   // Register built-in tracker adapters
   await import("../adapters/tracker/feishu-bitable/register.ts");
+  await import("../adapters/tracker/gitlab-issues/register.ts");
 
   const tracker = createTracker(config.tracker.kind, config.tracker as unknown as Record<string, unknown>);
 

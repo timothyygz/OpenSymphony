@@ -1,5 +1,5 @@
 import { registerTracker } from "../registry.ts";
-import type { TrackerSetupFn } from "../registry.ts";
+import type { TrackerSetupFn } from "../../setup/types.ts";
 import { createGitLabIssuesAdapter } from "./adapter.ts";
 import { GitLabApi } from "./api.ts";
 

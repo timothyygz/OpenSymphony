@@ -36,9 +36,7 @@ export class GitLabIssuesAdapter implements TrackerAdapter {
   }
 
   async fetchCandidateIssues(): Promise<Issue[]> {
-    const stateLabels = this.activeStates.map((s) => `${this.labelPrefix}${s}`).join(",");
-    const issues = await this.api.listIssues({ labels: stateLabels, state: "opened", per_page: "100" });
-    return issues.map(mapGitLabIssueToIssue);
+    return this.fetchIssuesByStates(this.activeStates);
   }
 
   async fetchIssuesByStates(states: string[]): Promise<Issue[]> {
@@ -47,9 +45,21 @@ export class GitLabIssuesAdapter implements TrackerAdapter {
       const issues = await this.api.listIssues({ state: "opened", per_page: "100" });
       return issues.map(mapGitLabIssueToIssue);
     }
-    const stateLabels = states.map((s) => `${this.labelPrefix}${s}`).join(",");
-    const issues = await this.api.listIssues({ labels: stateLabels, state: "opened", per_page: "100" });
-    return issues.map(mapGitLabIssueToIssue);
+    // GitLab API treats comma-separated labels as AND, but we need OR.
+    // Query each state label separately and deduplicate by issue id.
+    const seen = new Set<number>();
+    const results: Issue[] = [];
+    for (const state of states) {
+      const label = `${this.labelPrefix}${state}`;
+      const issues = await this.api.listIssues({ labels: label, state: "opened", per_page: "100" });
+      for (const issue of issues) {
+        if (!seen.has(issue.id)) {
+          seen.add(issue.id);
+          results.push(mapGitLabIssueToIssue(issue));
+        }
+      }
+    }
+    return results;
   }
 
   async fetchIssueStatesByIds(ids: string[]): Promise<Issue[]> {
@@ -155,8 +165,7 @@ export class GitLabIssuesAdapter implements TrackerAdapter {
   }
 
   getDashboardUrl(): string | null {
-    const projectId = encodeURIComponent(this.api.projectId);
-    return `${this.api.host}/${projectId}/-/issues`;
+    return `${this.api.host}/${this.api.projectId}/-/issues`;
   }
 }
 

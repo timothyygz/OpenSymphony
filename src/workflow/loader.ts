@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
+import { symphonyWorkflow } from "../paths.ts";
 import { parse as parseYaml } from "yaml";
 import type { WorkflowDefinition } from "../model/index.ts";
 import { MissingWorkflowFileError, WorkflowParseError, WorkflowFrontMatterNotMapError } from "../errors/errors.ts";
@@ -10,7 +10,7 @@ export function resolveWorkflowPath(explicitPath?: string): string {
   if (explicitPath) {
     return resolve(explicitPath);
   }
-  return resolve(homedir(), ".open-symphony", "WORKFLOW.md");
+  return symphonyWorkflow();
 }
 
 export function loadWorkflow(filePath: string): WorkflowDefinition {

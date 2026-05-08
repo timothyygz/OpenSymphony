@@ -168,9 +168,8 @@ async function main() {
   });
 
   const { TokenStore } = await import("./metrics/token-store.ts");
-  const { homedir } = await import("node:os");
-  const { resolve: resolvePath } = await import("node:path");
-  const dbPath = resolvePath(homedir(), ".open-symphony", "symphony.db");
+  const { symphonyDb } = await import("./paths.ts");
+  const dbPath = symphonyDb();
   const tokenStore = new TokenStore(dbPath);
 
   const { ExecutionLog } = await import("./logging/execution-log.ts");

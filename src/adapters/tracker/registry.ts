@@ -1,19 +1,6 @@
 import type { TrackerAdapter, TrackerAdapterFactory } from "./types.ts";
-import type { Prompts } from "../../commands/init-core.ts";
+import type { TrackerSetupFn } from "../../setup/types.ts";
 import { logger } from "../../logging/logger.ts";
-
-export interface TrackerSetupContext {
-  prompts: Prompts;
-  /** Optional overrides for testing (e.g., mock API factories) */
-  testOverrides?: Record<string, unknown>;
-}
-
-export interface TrackerSetupResult {
-  config: Record<string, unknown>;
-  credentials?: Record<string, string>;
-}
-
-export type TrackerSetupFn = (ctx: TrackerSetupContext) => Promise<TrackerSetupResult>;
 
 interface TrackerEntry {
   factory: TrackerAdapterFactory;

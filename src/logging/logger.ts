@@ -1,10 +1,9 @@
 import pino from "pino";
 import { multistream } from "pino";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { mkdirSync } from "node:fs";
+import { symphonyLogsDir } from "../paths.ts";
 
-export const LOGS_DIR = resolve(homedir(), ".open-symphony", "logs");
+export const LOGS_DIR = symphonyLogsDir();
 
 export function ensureLogDir(): string {
   mkdirSync(LOGS_DIR, { recursive: true });
