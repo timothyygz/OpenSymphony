@@ -1,5 +1,5 @@
-import { enterAltScreen, exitAltScreen, drawLines } from "./renderer.ts";
-import { formatHeader, formatHistory, formatRunningTable, formatBackoffQueue } from "./layout.ts";
+import { enterAltScreen, exitAltScreen, drawLines, ANSI, colorize } from "./renderer.ts";
+import { formatHeader, formatHistory, formatRunningTable, formatBackoffQueue, formatCompletedTable } from "./layout.ts";
 import { Sparkline } from "./sparkline.ts";
 import type { TokenStore } from "../metrics/token-store.ts";
 import type { Orchestrator } from "../orchestrator/orchestrator.ts";
@@ -14,19 +14,23 @@ export class Dashboard {
   private readonly sparkline = new Sparkline();
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private resizeHandler: (() => void) | null = null;
+  private keyHandler: ((chunk: Buffer) => void) | null = null;
   private lastFingerprint: string | null = null;
   private lastRenderAt = 0;
   private readonly minIdleRerenderMs = 1000;
+  private paused = false;
+  private readonly exitCallback: (() => void) | null;
 
   private readonly tokenStore: TokenStore;
   private readonly trackerUrl: string | null;
   private cachedHistory: HistoryStats | null = null;
   private lastHistoryQueryAt = 0;
 
-  constructor(orchestrator: Orchestrator, tokenStore: TokenStore, trackerUrl?: string | null) {
+  constructor(orchestrator: Orchestrator, tokenStore: TokenStore, trackerUrl?: string | null, exitCallback?: () => void) {
     this.orchestrator = orchestrator;
     this.tokenStore = tokenStore;
     this.trackerUrl = trackerUrl ?? null;
+    this.exitCallback = exitCallback ?? null;
     this.refreshMs = parseInt(process.env.SYMPHONY_TUI_REFRESH_MS ?? "", 10) || DEFAULT_REFRESH_MS;
   }
 
@@ -37,6 +41,13 @@ export class Dashboard {
       this.forceRender();
     };
     process.stdout.on("resize", this.resizeHandler);
+
+    this.keyHandler = (chunk: Buffer) => {
+      this.handleKey(chunk);
+    };
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on("data", this.keyHandler);
 
     this.intervalHandle = setInterval(() => {
       this.render();
@@ -50,11 +61,32 @@ export class Dashboard {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
     }
+    if (this.keyHandler) {
+      process.stdin.removeListener("data", this.keyHandler);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      this.keyHandler = null;
+    }
     if (this.resizeHandler) {
       process.stdout.off("resize", this.resizeHandler);
       this.resizeHandler = null;
     }
     exitAltScreen();
+  }
+
+  private handleKey(chunk: Buffer): void {
+    const key = chunk.toString();
+    if (key === "q" || key === "") {
+      this.stop();
+      if (this.exitCallback) {
+        this.exitCallback();
+      } else {
+        process.exit(0);
+      }
+    } else if (key === "p") {
+      this.paused = !this.paused;
+      this.forceRender();
+    }
   }
 
   private render(): void {
@@ -75,6 +107,11 @@ export class Dashboard {
     const historyLines = formatHistory(history);
     const table = formatRunningTable(state);
     const backoff = formatBackoffQueue(state);
+    const completed = formatCompletedTable(state);
+
+    const pauseHint = this.paused
+      ? colorize(" PAUSED", ANSI.yellow)
+      : "";
 
     const lines = [
       ...header,
@@ -82,7 +119,9 @@ export class Dashboard {
       ...table,
       "",
       ...backoff,
-      "╰─",
+      ...completed,
+      "",
+      colorize("╰─", ANSI.bold) + pauseHint + colorize("  [q] quit  [p] pause/resume", ANSI.dim),
     ];
 
     drawLines(lines);

@@ -2,7 +2,7 @@ import { ANSI, colorize } from "./renderer.ts";
 import { displayWidth, padCell, truncate, formatCount, formatRuntime } from "./format.ts";
 import { humanizeEvent, dotColor, formatRateLimits } from "./events.ts";
 import type { Sparkline } from "./sparkline.ts";
-import type { OrchestratorState } from "../orchestrator/state.ts";
+import type { OrchestratorState, CompletedEntry } from "../orchestrator/state.ts";
 import { effectiveTokenTotals } from "../orchestrator/state.ts";
 import type { RunningEntry, RetryEntry, HistoryStats, PeriodStats } from "../model/index.ts";
 
@@ -139,8 +139,9 @@ function formatRunningRow(entry: RunningEntry, ew: number): string {
   const title = truncate(entry.issue.title ?? "unknown", COL_TITLE);
   const stateStr = truncate(entry.issue.state, COL_STATE);
   const ageSeconds = (Date.now() - entry.startedAt.getTime()) / 1000;
+  const bar = progressBar(entry.turnCount, 8);
   const ageStr = entry.turnCount > 0
-    ? `${formatRuntime(ageSeconds)} / ${entry.turnCount}`
+    ? `${formatRuntime(ageSeconds)} ${bar}`
     : formatRuntime(ageSeconds);
   const tokens = formatCount(entry.tokenUsage.totalTokens);
 
@@ -160,6 +161,14 @@ function formatRunningRow(entry: RunningEntry, ew: number): string {
     " ",
     colorize(padCell(truncate(evtText, ew), ew), colorizeCode(evtColor)),
   ].join("");
+}
+
+const PROGRESS_CHARS = ["░", "▓"];
+
+function progressBar(turns: number, width: number): string {
+  if (turns <= 0) return "";
+  const filled = Math.min(turns, width);
+  return PROGRESS_CHARS[1]!.repeat(filled) + PROGRESS_CHARS[0]!.repeat(Math.max(0, width - filled));
 }
 
 export function formatBackoffQueue(state: OrchestratorState): string[] {
@@ -217,4 +226,47 @@ function colorizeCode(name: string): string {
     gray: ANSI.gray,
   };
   return map[name] ?? ANSI.gray;
+}
+
+const COMPLETED_COLS = { id: 10, title: 24, tokens: 10, turns: 6, runtime: 12 };
+
+export function formatCompletedTable(state: OrchestratorState): string[] {
+  const entries = state.recentCompleted;
+  if (entries.length === 0) return [];
+
+  const { id: cId, title: cTitle, tokens: cTokens, turns: cTurns, runtime: cRuntime } = COMPLETED_COLS;
+
+  const header = [
+    padCell("ID", cId),
+    padCell("TITLE", cTitle),
+    padCell("TOKENS", cTokens),
+    padCell("TURNS", cTurns),
+    padCell("RUNTIME", cRuntime),
+  ].join(" ");
+
+  const sepWidth = cId + cTitle + cTokens + cTurns + cRuntime + 4;
+
+  const lines: string[] = [
+    colorize("├─ Recently Completed", ANSI.bold),
+    "│ " + colorize(header, ANSI.gray),
+    "│ " + colorize("─".repeat(sepWidth), ANSI.gray),
+  ];
+
+  for (const entry of entries) {
+    lines.push(formatCompletedRow(entry));
+  }
+
+  return lines;
+}
+
+function formatCompletedRow(entry: CompletedEntry): string {
+  const { id: cId, title: cTitle, tokens: cTokens, turns: cTurns, runtime: cRuntime } = COMPLETED_COLS;
+
+  return "│ " +
+    colorize("✔", ANSI.green) + " " +
+    colorize(padCell(truncate(entry.identifier, cId), cId), ANSI.cyan) + " " +
+    colorize(padCell(truncate(entry.title, cTitle), cTitle), ANSI.gray) + " " +
+    colorize(padCell(formatCount(entry.totalTokens), cTokens, "right"), ANSI.yellow) + " " +
+    colorize(padCell(String(entry.turns), cTurns), ANSI.gray) + " " +
+    colorize(padCell(formatRuntime(entry.runtimeSeconds), cRuntime), ANSI.magenta);
 }
