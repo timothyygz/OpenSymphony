@@ -253,6 +253,7 @@ async function startOrchestrator(workflowPath: string | undefined, noTui: boolea
   // Register built-in adapters (after log file is configured — these trigger logger.debug)
   await import("./adapters/tracker/feishu-bitable/register.ts");
   await import("./adapters/tracker/gitlab-issues/register.ts");
+  await import("./adapters/tracker/github-issues/register.ts");
   await import("./adapters/agent/claude-code/register.ts");
 
   logger.info({ path: resolvedPath }, "Starting Symphony service");
