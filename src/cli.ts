@@ -14,6 +14,8 @@ const SUBCOMMANDS = new Set([
   "task",
   "status",
   "config",
+  "config-export",
+  "config-import",
 ]);
 
 const COMMAND_MODULES: Record<string, () => Promise<void>> = {
@@ -57,6 +59,8 @@ function printHelp(): void {
   console.log("  task <id> [path]       Show task detail");
   console.log("  status [path]          Kanban overview by state");
   console.log("  config [path]          Show current workflow config");
+  console.log("  config-export [path]   Export config to JSON (redacts credentials by default)");
+  console.log("  config-import <file>   Import config from JSON export file");
   console.log();
   console.log("Options:");
   console.log("  --no-tui               Run in headless mode (JSON logs to stdout)");
@@ -114,6 +118,18 @@ async function handleSubcommand(
     process.exit(1);
   }
 
+  if (subcommand) {
+    // Import command modules to trigger registration
+    if (subcommand === "init") await import("./commands/init.ts");
+    else if (subcommand === "doctor") await import("./commands/doctor.ts");
+    else if (subcommand === "version") await import("./commands/version.ts");
+    else if (subcommand === "tasks") await import("./commands/tasks.ts");
+    else if (subcommand === "task") await import("./commands/task.ts");
+    else if (subcommand === "status") await import("./commands/status.ts");
+    else if (subcommand === "config") await import("./commands/config.ts");
+    else if (subcommand === "config-export") await import("./commands/config-export.ts");
+    else if (subcommand === "config-import") await import("./commands/config-import.ts");
+  }
   const cmdArgs = [...positional];
   if (flags.workflowPath) cmdArgs.push(flags.workflowPath);
   if (flags.json) process.env.OPENSYMPHONY_JSON = "1";
