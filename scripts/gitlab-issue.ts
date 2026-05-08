@@ -1,83 +1,311 @@
-const env = Bun.env;
-const TOKEN = env.GITLAB_TOKEN;
-const GITLAB_URL = env.GITLAB_URL || "https://gitlab.sto.cn";
+#!/usr/bin/env bun
+//
+// GitLab Issues task management CLI
+//
+// Usage:
+//   bun scripts/gitlab-issue.ts <command> [options]
+//
+// Commands:
+//   list                          List candidate (active) issues
+//   all                           List all issues
+//   show <iid>                    Show issue details
+//   state <iid> <new_state>       Update issue state
+//   create <title> [flags]        Create a new task
+//
+// Global:
+//   --workflow <path>             Path to WORKFLOW.md (default: ./WORKFLOW.md)
+//
+// Create flags:
+//   --desc <text>                 Description
+//   --labels <a,b,c>             Labels (comma-separated)
+//   --initial-state <state>       Initial state (default: first active state)
 
-if (!TOKEN) {
-  console.error("Error: GITLAB_TOKEN not set in .env");
-  process.exit(1);
-}
+import { loadWorkflow, resolveWorkflowPath } from "../src/workflow/loader.ts";
+import { resolveEnvValue } from "../src/workflow/config.ts";
+import { GitLabApi, type GitLabIssueResponse } from "../src/adapters/tracker/gitlab-issues/api.ts";
+import { mapGitLabIssueToIssue, extractSymphonyState, extractNonSymphonyLabels } from "../src/adapters/tracker/gitlab-issues/mapper.ts";
+import type { Issue } from "../src/model/issue.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { symphonySettings } from "../src/paths.ts";
 
-const headers = { "PRIVATE-TOKEN": TOKEN };
+const SYMPHONY_LABEL_PREFIX = "symphony::";
 
-async function api(path: string, options?: RequestInit) {
-  const res = await fetch(`${GITLAB_URL}/api/v4${path}`, {
-    headers,
-    ...options,
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+// --- Arg parsing ---
+
+function parseCli(args: string[]) {
+  const options: Record<string, string> = {};
+  const positionals: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg) continue;
+    if (arg.startsWith("--")) {
+      const key = arg.slice(2);
+      const value = args[i + 1];
+      if (value && !value.startsWith("--")) {
+        options[key] = value;
+        i++;
+      }
+    } else {
+      positionals.push(arg);
+    }
   }
-  return res.json();
+
+  return { options, positionals };
 }
 
-const command = process.argv[2];
-const arg = process.argv[3];
+// --- Config ---
+
+interface TrackerConfig {
+  gitlab_host: string;
+  gitlab_token: string;
+  project_id: string;
+  label_prefix: string;
+  active_states: string[];
+  terminal_states: string[];
+}
+
+function loadConfig(workflowPath?: string): {
+  config: TrackerConfig;
+  api: GitLabApi;
+} {
+  const path = resolveWorkflowPath(workflowPath);
+  const { config: raw } = loadWorkflow(path);
+  const tracker = { ...(raw.tracker as Record<string, unknown>) };
+
+  if (!tracker || tracker.kind !== "gitlab_issues") {
+    console.error("Error: tracker.kind must be 'gitlab_issues'");
+    process.exit(1);
+  }
+
+  // Resolve token: WORKFLOW.md → settings.json → env var
+  let token = resolveEnvValue(tracker.gitlab_token) as string;
+  if (!token) {
+    const settingsPath = symphonySettings();
+    if (existsSync(settingsPath)) {
+      const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+      token = settings?.tracker?.gitlab_issues?.gitlab_token;
+    }
+  }
+  if (!token) {
+    token = process.env.GITLAB_TOKEN;
+  }
+
+  const host = (tracker.gitlab_host as string) ?? "https://gitlab.com";
+  const projectId = String(tracker.project_id);
+
+  if (!token) {
+    console.error("Error: gitlab_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITLAB_TOKEN)");
+    process.exit(1);
+  }
+  if (!projectId) {
+    console.error("Error: tracker.project_id is required");
+    process.exit(1);
+  }
+
+  const config: TrackerConfig = {
+    gitlab_host: host,
+    gitlab_token: token,
+    project_id: projectId,
+    label_prefix: (tracker.label_prefix as string) ?? SYMPHONY_LABEL_PREFIX,
+    active_states: (tracker.active_states as string[]) ?? ["Todo", "In Progress"],
+    terminal_states: (tracker.terminal_states as string[]) ?? ["Done", "Cancelled"],
+  };
+
+  const api = new GitLabApi({ host, token, projectId });
+
+  return { config, api };
+}
+
+// --- Output formatting ---
+
+function formatRow(issue: Issue) {
+  return {
+    iid: issue.id,
+    identifier: issue.identifier,
+    title: issue.title.length > 40 ? issue.title.slice(0, 37) + "..." : issue.title,
+    state: issue.state,
+    labels: issue.labels.join(",") || "-",
+  };
+}
+
+function printDetail(issue: Issue, raw: GitLabIssueResponse) {
+  console.log(`  IID:         ${issue.id}`);
+  console.log(`  Identifier:  ${issue.identifier}`);
+  console.log(`  Title:       ${issue.title}`);
+  console.log(`  State:       ${issue.state} (GitLab: ${raw.state})`);
+  console.log(`  Labels:      ${raw.labels.join(", ") || "-"}`);
+  console.log(`  Weight:      ${raw.weight ?? "-"}`);
+  console.log(`  Description: ${issue.description ?? "(none)"}`);
+  console.log(`  URL:         ${issue.url ?? "-"}`);
+  console.log(`  Created:     ${issue.createdAt?.toISOString() ?? "-"}`);
+  console.log(`  Updated:     ${issue.updatedAt?.toISOString() ?? "-"}`);
+}
+
+// --- Commands ---
+
+async function cmdList(config: TrackerConfig, api: GitLabApi) {
+  const labelPrefix = config.label_prefix;
+  const seen = new Set<number>();
+  const issues: Issue[] = [];
+
+  for (const state of config.active_states) {
+    const label = `${labelPrefix}${state}`;
+    const raw = await api.listIssues({ labels: label, state: "opened", per_page: "100" });
+    for (const r of raw) {
+      if (!seen.has(r.id)) {
+        seen.add(r.id);
+        issues.push(mapGitLabIssueToIssue(r));
+      }
+    }
+  }
+
+  if (issues.length === 0) {
+    console.log("No candidate issues found.");
+    return;
+  }
+  console.log(`Found ${issues.length} candidate issue(s):\n`);
+  console.table(issues.map(formatRow));
+}
+
+async function cmdAll(config: TrackerConfig, api: GitLabApi) {
+  const raw = await api.listIssues({ state: "opened", per_page: "100" });
+  const issues = raw.map(mapGitLabIssueToIssue);
+
+  if (issues.length === 0) {
+    console.log("No issues found.");
+    return;
+  }
+  console.log(`Found ${issues.length} issue(s):\n`);
+  console.table(issues.map(formatRow));
+}
+
+async function cmdShow(api: GitLabApi, iid: string) {
+  const raw = await api.getIssue(Number(iid));
+  const issue = mapGitLabIssueToIssue(raw);
+  printDetail(issue, raw);
+}
+
+async function cmdState(config: TrackerConfig, api: GitLabApi, iid: string, newState: string) {
+  const raw = await api.getIssue(Number(iid));
+  const nonSymphonyLabels = extractNonSymphonyLabels(raw.labels);
+  const newLabel = `${config.label_prefix}${newState}`;
+  const labels = [...nonSymphonyLabels, newLabel];
+
+  await api.updateIssue(Number(iid), { labels: labels.join(",") });
+  console.log(`Updated issue #${iid} state -> "${newState}"`);
+}
+
+async function cmdCreate(
+  config: TrackerConfig,
+  api: GitLabApi,
+  title: string,
+  opts: {
+    desc?: string;
+    labels?: string[];
+    state?: string;
+  },
+) {
+  const labels: string[] = [...(opts.labels ?? [])];
+  const state = opts.state ?? config.active_states[0] ?? "Todo";
+  labels.push(`${config.label_prefix}${state}`);
+
+  const created = await api.createIssue({
+    title,
+    description: opts.desc ?? "",
+    labels: labels.join(","),
+  });
+  const issue = mapGitLabIssueToIssue(created);
+  console.log(`Created issue #${created.iid}: ${issue.url ?? created.web_url}`);
+}
+
+// --- Main ---
+
+function printHelp() {
+  console.log(`Usage: bun scripts/gitlab-issue.ts <command> [options]
+
+Commands:
+  list                          List candidate (active) issues
+  all                           List all issues
+  show <iid>                    Show issue details
+  state <iid> <new_state>       Update issue state
+  create <title> [flags]        Create a new task
+
+Global:
+  --workflow <path>             Path to WORKFLOW.md (default: ./WORKFLOW.md)
+
+Create flags:
+  --desc <text>                 Description
+  --labels <a,b,c>             Labels (comma-separated)
+  --initial-state <state>       Initial state (default: first active state)`);
+}
 
 async function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+    printHelp();
+    process.exit(0);
+  }
+
+  const command = args[0];
+  const { options, positionals } = parseCli(args.slice(1));
+  const { config, api } = loadConfig(options.workflow);
+
   switch (command) {
-    case "get-issue": {
-      // arg: "project/path" or project_id, issue_iid
-      const [project, iid] = arg.split("#");
-      const encoded = encodeURIComponent(project);
-      const issue: any = await api(`/projects/${encoded}/issues/${iid}`);
-      console.log(JSON.stringify(issue, null, 2));
+    case "list":
+      await cmdList(config, api);
       break;
-    }
-    case "list-issues": {
-      const encoded = encodeURIComponent(arg);
-      const issues: any = await api(`/projects/${encoded}/issues?state=opened&per_page=20`);
-      console.log(JSON.stringify(issues, null, 2));
+
+    case "all":
+      await cmdAll(config, api);
       break;
-    }
-    case "comment": {
-      const [project, iid] = arg.split("#");
-      const body = process.argv[4];
-      if (!body) {
-        console.error("Usage: comment <project#iid> <message>");
+
+    case "show": {
+      const iid = positionals[0];
+      if (!iid) {
+        console.error("Error: show requires <iid>");
         process.exit(1);
       }
-      const encoded = encodeURIComponent(project);
-      const note: any = await api(`/projects/${encoded}/issues/${iid}/notes`, {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ body }),
-      });
-      console.log("Comment added:", note.id);
+      await cmdShow(api, iid);
       break;
     }
-    case "close": {
-      const [project, iid] = arg.split("#");
-      const encoded = encodeURIComponent(project);
-      const issue: any = await api(`/projects/${encoded}/issues/${iid}`, {
-        method: "PUT",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ state_event: "close" }),
-      });
-      console.log("Issue closed:", issue.state);
+
+    case "state": {
+      const iid = positionals[0];
+      const state = positionals[1];
+      if (!iid || !state) {
+        console.error("Error: state requires <iid> <new_state>");
+        process.exit(1);
+      }
+      await cmdState(config, api, iid, state);
       break;
     }
+
+    case "create": {
+      const title = positionals[0];
+      if (!title) {
+        console.error("Error: create requires <title>");
+        process.exit(1);
+      }
+      await cmdCreate(config, api, title, {
+        desc: options.desc,
+        labels: options.labels?.split(",").map((l) => l.trim()),
+        state: options["initial-state"],
+      });
+      break;
+    }
+
     default:
-      console.log("Usage: gitlab-issue.ts <command> <arg>");
-      console.log("Commands:");
-      console.log("  get-issue <project/path#iid>");
-      console.log("  list-issues <project/path>");
-      console.log("  comment <project/path#iid> <message>");
-      console.log("  close <project/path#iid>");
+      console.error(`Unknown command: ${command}`);
+      printHelp();
+      process.exit(1);
   }
 }
 
-main().catch((e) => {
-  console.error(e.message);
+main().catch((err) => {
+  console.error("Error:", err.message);
   process.exit(1);
 });
