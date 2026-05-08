@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
+import { dirname } from "node:path";
+import pino from "pino";
 import { getCommand } from "./commands/index.ts";
+import type { ServiceConfig, WorkflowDefinition } from "./model/index.ts";
 
 const BINARY_NAME = "opensymphony";
 
@@ -118,6 +121,100 @@ async function handleSubcommand(
   await handler(cmdArgs);
 }
 
+// --- Orchestrator startup helpers ---
+
+export async function loadWorkflowOrExit(resolvedPath: string): Promise<WorkflowDefinition> {
+  const { loadWorkflow } = await import("./workflow/loader.ts");
+  const { MissingWorkflowFileError } = await import("./errors/errors.ts");
+
+  try {
+    return loadWorkflow(resolvedPath);
+  } catch (err) {
+    if (err instanceof MissingWorkflowFileError) {
+      console.error(`Workflow file not found: ${resolvedPath}`);
+      console.error();
+      console.error("Run 'opensymphony init' to create one, or specify a path:");
+      console.error("  opensymphony /path/to/WORKFLOW.md");
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+export async function buildConfigAndValidate(
+  workflow: WorkflowDefinition,
+  workflowDir: string,
+): Promise<ServiceConfig> {
+  const { buildServiceConfig, validateDispatchConfig } = await import("./workflow/config.ts");
+  const { logger } = await import("./logging/logger.ts");
+
+  const config = buildServiceConfig(workflow.config, workflowDir);
+  const validationError = validateDispatchConfig(config);
+  if (validationError) {
+    logger.fatal({ error: validationError }, "Startup validation failed");
+    process.exit(1);
+  }
+  return config;
+}
+
+export interface OrchestratorServices {
+  tracker: import("./adapters/tracker/types.ts").TrackerAdapter;
+  agent: import("./adapters/agent/types.ts").AgentAdapter;
+  workspaceManager: import("./workspace/manager.ts").WorkspaceManager;
+  tokenStore: import("./metrics/token-store.ts").TokenStore;
+  executionLog: import("./logging/execution-log.ts").ExecutionLog;
+}
+
+export async function createServices(
+  config: ServiceConfig,
+  workflowDir: string,
+  logDir: string,
+): Promise<OrchestratorServices> {
+  const { createTracker } = await import("./adapters/tracker/registry.ts");
+  const { createAgent } = await import("./adapters/agent/registry.ts");
+  const { WorkspaceManager } = await import("./workspace/manager.ts");
+  const { TokenStore } = await import("./metrics/token-store.ts");
+  const { symphonyDb } = await import("./paths.ts");
+  const { ExecutionLog } = await import("./logging/execution-log.ts");
+
+  const tracker = createTracker(config.tracker.kind, { ...config.tracker });
+  const agent = createAgent(config.agent.kind, config.agent.config);
+
+  const workspaceManager = new WorkspaceManager({
+    root: config.workspace.root,
+    hooks: config.hooks,
+    sources: config.workspace.sources ?? [],
+    workflowDir,
+  });
+
+  const tokenStore = new TokenStore(symphonyDb());
+  const executionLog = new ExecutionLog(`${logDir}/.symphony-execution.jsonl`);
+
+  return { tracker, agent, workspaceManager, tokenStore, executionLog };
+}
+
+export function setupGracefulShutdown(deps: {
+  orchestrator: import("./orchestrator/orchestrator.ts").Orchestrator;
+  watcher: import("./workflow/watcher.ts").WorkflowWatcher;
+  dashboard: DashboardLike | null;
+  tokenStore: import("./metrics/token-store.ts").TokenStore;
+  logger: pino.Logger;
+}): void {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (deps.dashboard) deps.dashboard.stop();
+    deps.logger.info("Shutting down...");
+    deps.watcher.stop();
+    await deps.orchestrator.stop();
+    deps.tokenStore.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
 // --- Orchestrator startup ---
 
 async function startOrchestrator(workflowPath: string | undefined, noTui: boolean): Promise<void> {
@@ -126,18 +223,13 @@ async function startOrchestrator(workflowPath: string | undefined, noTui: boolea
     process.env.SYMPHONY_LOG_DEST = "stderr";
   }
 
+  const { resolveWorkflowPath } = await import("./workflow/loader.ts");
+  const { logger, setLogFilePath, ensureLogDir } = await import("./logging/logger.ts");
   const { Orchestrator } = await import("./orchestrator/orchestrator.ts");
   const { WorkflowWatcher } = await import("./workflow/watcher.ts");
-  const { loadWorkflow, resolveWorkflowPath } = await import("./workflow/loader.ts");
-  const { MissingWorkflowFileError } = await import("./errors/errors.ts");
-  const { buildServiceConfig, validateDispatchConfig } = await import("./workflow/config.ts");
-  const { createTracker } = await import("./adapters/tracker/registry.ts");
-  const { createAgent } = await import("./adapters/agent/registry.ts");
-  const { WorkspaceManager } = await import("./workspace/manager.ts");
-  const { logger, setLogFilePath, ensureLogDir } = await import("./logging/logger.ts");
 
   const resolvedPath = resolveWorkflowPath(workflowPath);
-  const workflowDir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+  const workflowDir = dirname(resolvedPath);
 
   const logDir = ensureLogDir();
   setLogFilePath(`${logDir}/symphony.log`);
@@ -149,65 +241,24 @@ async function startOrchestrator(workflowPath: string | undefined, noTui: boolea
 
   logger.info({ path: resolvedPath }, "Starting Symphony service");
 
-  // Initial load
-  let workflow;
-  try {
-    workflow = loadWorkflow(resolvedPath);
-  } catch (err) {
-    if (err instanceof MissingWorkflowFileError) {
-      console.error(`Workflow file not found: ${resolvedPath}`);
-      console.error();
-      console.error("Run 'opensymphony init' to create one, or specify a path:");
-      console.error("  opensymphony /path/to/WORKFLOW.md");
-      process.exit(1);
-    }
-    throw err;
-  }
-  const config = buildServiceConfig(workflow.config, workflowDir);
-
-  // Validate
-  const validationError = validateDispatchConfig(config);
-  if (validationError) {
-    logger.fatal({ error: validationError }, "Startup validation failed");
-    process.exit(1);
-  }
-
-  // Create adapters
-  const tracker = createTracker(config.tracker.kind, config.tracker as unknown as Record<string, unknown>);
-  const agent = createAgent(config.agent.kind, config.agent.config as Record<string, unknown>);
-
-  // Create workspace manager
-  const workspaceManager = new WorkspaceManager({
-    root: config.workspace.root,
-    hooks: config.hooks,
-    sources: config.workspace.sources ?? [],
-    workflowDir: workflowDir,
-  });
-
-  const { TokenStore } = await import("./metrics/token-store.ts");
-  const { symphonyDb } = await import("./paths.ts");
-  const tokenStore = new TokenStore(symphonyDb());
-
-  const { ExecutionLog } = await import("./logging/execution-log.ts");
-  const executionLog = new ExecutionLog(`${logDir}/.symphony-execution.jsonl`);
+  // Load, validate, and create services
+  const workflow = await loadWorkflowOrExit(resolvedPath);
+  const config = await buildConfigAndValidate(workflow, workflowDir);
+  const services = await createServices(config, workflowDir, logDir);
 
   // Create orchestrator
   const orchestrator = new Orchestrator({
     config,
     workflow,
-    tracker,
-    agent,
-    workspaceManager,
-    tokenStore,
-    executionLog,
+    ...services,
   });
 
   // Dashboard (TUI mode)
   let dashboard: DashboardLike | null = null;
   if (useTui) {
     const { Dashboard } = await import("./tui/dashboard.ts");
-    const trackerUrl = tracker.getDashboardUrl?.() ?? null;
-    dashboard = new Dashboard(orchestrator, tokenStore, trackerUrl);
+    const trackerUrl = services.tracker.getDashboardUrl?.() ?? null;
+    dashboard = new Dashboard(orchestrator, services.tokenStore, trackerUrl);
   }
 
   // Start workflow watcher
@@ -219,21 +270,7 @@ async function startOrchestrator(workflowPath: string | undefined, noTui: boolea
   });
 
   // Graceful shutdown
-  let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-
-    if (dashboard) dashboard.stop();
-    logger.info("Shutting down...");
-    watcher.stop();
-    await orchestrator.stop();
-    tokenStore.close();
-    process.exit(0);
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  setupGracefulShutdown({ orchestrator, watcher, dashboard, tokenStore: services.tokenStore, logger });
 
   // Start orchestrator
   await orchestrator.start();
@@ -282,7 +319,7 @@ export function formatError(err: unknown): string {
   }
   try {
     return JSON.stringify(err);
-  } catch {
+  } catch (_e) {
     return String(err);
   }
 }

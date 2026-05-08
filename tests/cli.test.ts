@@ -1,5 +1,9 @@
-import { test, describe, expect } from "bun:test";
-import { parseArgs, formatError } from "../src/cli.ts";
+import { test, describe, expect, mock } from "bun:test";
+import {
+  parseArgs,
+  formatError,
+  setupGracefulShutdown,
+} from "../src/cli.ts";
 
 // --- parseArgs ---
 
@@ -119,5 +123,134 @@ describe("formatError", () => {
 
   test("formats undefined via JSON.stringify", () => {
     expect(formatError(undefined)).toBeUndefined();
+  });
+
+  test("handles circular reference gracefully (no silent catch)", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    // JSON.stringify would throw on circular refs — formatError falls back to String()
+    const result = formatError(circular);
+    expect(typeof result).toBe("string");
+    expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+// --- setupGracefulShutdown ---
+
+describe("setupGracefulShutdown", () => {
+  test("registers SIGINT and SIGTERM handlers", () => {
+    const registeredEvents: string[] = [];
+    const origExit = process.exit;
+    process.exit = (() => {}) as never;
+
+    const origProcessOn = process.on;
+    process.on = ((event: string, _handler: (...args: unknown[]) => void) => {
+      registeredEvents.push(event);
+      return process;
+    }) as never;
+
+    try {
+      const orchestratorMock = { stop: mock(() => Promise.resolve()) };
+      const watcherMock = { stop: mock(() => {}) };
+      const tokenStoreMock = { close: mock(() => {}) };
+      const loggerMock = { info: mock(() => {}) };
+
+      setupGracefulShutdown({
+        orchestrator: orchestratorMock as never,
+        watcher: watcherMock as never,
+        dashboard: null,
+        tokenStore: tokenStoreMock as never,
+        logger: loggerMock as never,
+      });
+
+      expect(registeredEvents).toContain("SIGINT");
+      expect(registeredEvents).toContain("SIGTERM");
+    } finally {
+      process.on = origProcessOn;
+      process.exit = origExit;
+    }
+  });
+
+  test("calls dashboard.stop() and orchestrator.stop() on shutdown", async () => {
+    const origExit = process.exit;
+    const exitCodes: number[] = [];
+    process.exit = ((code: number) => { exitCodes.push(code); }) as never;
+
+    let sigintHandler: ((...args: unknown[]) => void) | null = null;
+    const origProcessOn = process.on;
+    process.on = ((event: string, handler: (...args: unknown[]) => void) => {
+      if (event === "SIGINT") sigintHandler = handler;
+      return process;
+    }) as never;
+
+    try {
+      const dashboardMock = { start: mock(() => {}), stop: mock(() => {}) };
+      const loggerMock = { info: mock(() => {}) };
+      const orchestratorMock = { stop: mock(() => Promise.resolve()) };
+      const watcherMock = { stop: mock(() => {}) };
+      const tokenStoreMock = { close: mock(() => {}) };
+
+      setupGracefulShutdown({
+        orchestrator: orchestratorMock as never,
+        watcher: watcherMock as never,
+        dashboard: dashboardMock,
+        tokenStore: tokenStoreMock as never,
+        logger: loggerMock as never,
+      });
+
+      // Trigger the handler
+      expect(sigintHandler).not.toBeNull();
+      await sigintHandler!();
+
+      expect(dashboardMock.stop).toHaveBeenCalled();
+      expect(loggerMock.info).toHaveBeenCalledWith("Shutting down...");
+      expect(watcherMock.stop).toHaveBeenCalled();
+      expect(orchestratorMock.stop).toHaveBeenCalled();
+      expect(tokenStoreMock.close).toHaveBeenCalled();
+      expect(exitCodes).toEqual([0]);
+    } finally {
+      process.on = origProcessOn;
+      process.exit = origExit;
+    }
+  });
+
+  test("prevents double-shutdown on rapid signals", async () => {
+    const origExit = process.exit;
+    const exitCodes: number[] = [];
+    process.exit = ((code: number) => { exitCodes.push(code); }) as never;
+
+    let sigintHandler: ((...args: unknown[]) => void) | null = null;
+    const origProcessOn = process.on;
+    process.on = ((event: string, handler: (...args: unknown[]) => void) => {
+      if (event === "SIGINT") sigintHandler = handler;
+      return process;
+    }) as never;
+
+    try {
+      const loggerMock = { info: mock(() => {}) };
+      const orchestratorMock = { stop: mock(() => Promise.resolve()) };
+      const watcherMock = { stop: mock(() => {}) };
+      const tokenStoreMock = { close: mock(() => {}) };
+
+      setupGracefulShutdown({
+        orchestrator: orchestratorMock as never,
+        watcher: watcherMock as never,
+        dashboard: null,
+        tokenStore: tokenStoreMock as never,
+        logger: loggerMock as never,
+      });
+
+      // First call triggers shutdown
+      await sigintHandler!();
+      // Second call should be a no-op
+      await sigintHandler!();
+
+      // orchestrator.stop called only once despite two signals
+      expect(orchestratorMock.stop).toHaveBeenCalledTimes(1);
+      expect(exitCodes).toEqual([0]);
+    } finally {
+      process.on = origProcessOn;
+      process.exit = origExit;
+    }
   });
 });
