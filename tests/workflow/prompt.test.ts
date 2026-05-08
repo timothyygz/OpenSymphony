@@ -109,14 +109,14 @@ describe("renderTemplate", () => {
 
   test("renders realistic Chinese prompt template", () => {
     const tpl = [
-      "你是一个 AI 编程助手，正在处理工单 {{ issue.identifier }}：{{ issue.title }}。",
-      "## 工单描述",
-      "{{ issue.description }}",
-      "## 当前状态",
-      "- 状态：{{ issue.state }}",
-      "- 优先级：{{ issue.priority }}",
-      "- 标签：{{ issue.labels | join: \"、\" }}",
+      "你是一个 AI 编程助手，正在自主处理工单 {{ issue.identifier }}：{{ issue.title }}。",
       "{% if attempt %}这是第 {{ attempt }} 次重试。{% endif %}",
+      "## 工单上下文",
+      "- 编号：{{ issue.identifier }}",
+      "- 状态：{{ issue.state }}",
+      "- 标签：{{ issue.labels | join: \"、\" }}",
+      "## 描述",
+      "{{ issue.description }}",
     ].join("\n");
 
     const issue: Issue = {
@@ -132,8 +132,6 @@ describe("renderTemplate", () => {
     expect(result).toContain("In Progress");
     expect(result).toContain("bug、urgent");
     expect(result).toContain("第 2 次重试");
-    // priority is null → empty string, not an error
-    expect(result).toContain("优先级：");
   });
 });
 
@@ -143,10 +141,12 @@ describe("buildContinuationGuidance", () => {
     expect(result).toContain("#1: Test issue");
     expect(result).toContain("Todo");
     expect(result).not.toContain("retry");
+    expect(result).toContain("tracker_tool");
   });
 
   test("with attempt", () => {
     const result = buildContinuationGuidance(makeIssue(), 3);
     expect(result).toContain("retry attempt #3");
+    expect(result).toContain("Resume from the current workspace state");
   });
 });
