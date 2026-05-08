@@ -264,7 +264,6 @@ describe("initCommand full flow — gitlab_issues", () => {
 
   // Answer sequence for gitlab happy path:
   // stepTracker: kind, group(host,token,projectId), createLabels, activeStates, terminalStates
-  // stepAgent: approvalPolicy
   // stepWorkspace: sourceType (none)
   // stepTemplate: template file
   function gitlabHappyPathAnswers(overrides: Partial<{
@@ -279,8 +278,6 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
-      // stepAgent
-      "auto",
       // stepWorkspace
       sourceType,
     ];
@@ -354,7 +351,7 @@ describe("initCommand full flow — gitlab_issues", () => {
     expect(existsSync(join(tempDir, "WORKFLOW.md"))).toBe(false);
   });
 
-  test("cancel at agent step — no file written", async () => {
+  test("cancel at template step — no file written", async () => {
     const { deps, enqueue } = createMockDeps();
     enqueue(
       "gitlab_issues",
@@ -362,7 +359,8 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
-      CANCEL, // cancel at agent
+      "none",
+      CANCEL, // cancel at template
     );
 
     await initCommand([tempDir], deps);
@@ -378,26 +376,7 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
-      "auto",
       CANCEL, // cancel at workspace
-    );
-
-    await initCommand([tempDir], deps);
-
-    expect(existsSync(join(tempDir, "WORKFLOW.md"))).toBe(false);
-  });
-
-  test("cancel at template step — no file written", async () => {
-    const { deps, enqueue } = createMockDeps();
-    enqueue(
-      "gitlab_issues",
-      "https://gitlab.com", "glpat-token", "42",
-      true,
-      "Todo,In Progress",
-      "Done,Cancelled",
-      "auto",
-      "none",
-      CANCEL, // cancel at template
     );
 
     await initCommand([tempDir], deps);

@@ -42,7 +42,6 @@ function createFlowDeps(tempDir: string, setupApiOverrides: Partial<SetupApi> = 
 // Answer sequence for a full happy path:
 // checkExistingWorkflow (no file → no prompt)
 // stepTracker: tracker kind selection, appId, appSecret (group), phone (empty)
-// stepAgent: approvalPolicy
 // stepWorkspace: sourceType, root
 // stepTemplate: template file
 function happyPathAnswers(overrides: Partial<{
@@ -60,8 +59,6 @@ function happyPathAnswers(overrides: Partial<{
     "new",
     // phone (empty = skip transfer)
     overrides.phone ?? "",
-    // stepAgent: approvalPolicy
-    "auto",
     // stepWorkspace: sourceType
     sourceType,
   ];
@@ -123,9 +120,9 @@ describe("initCommand full flow", () => {
     expect(existsSync(join(tempDir, "WORKFLOW.md"))).toBe(false);
   });
 
-  test("cancel at agent step — no file written", async () => {
+  test("cancel at workspace step — no file written", async () => {
     const { deps, enqueue } = createFlowDeps(tempDir);
-    // stepTracker: kind selection + answers (with mode "new") + cancel at agent
+    // stepTracker completes, then cancel at workspace step
     enqueue("feishu_bitable", "cli_app", "secret", "new", "", CANCEL);
 
     await initCommand([tempDir], deps);

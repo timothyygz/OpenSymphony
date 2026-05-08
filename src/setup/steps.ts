@@ -16,15 +16,15 @@ export async function checkExistingWorkflow(
   if (!existsSync(filePath)) return true;
 
   const action = await deps.prompts.select({
-    message: "WORKFLOW.md already exists. What would you like to do?",
+    message: "已存在 WORKFLOW.md，如何处理？",
     options: [
-      { value: "overwrite", label: "Overwrite" },
-      { value: "cancel", label: "Cancel" },
+      { value: "overwrite", label: "覆盖已有配置" },
+      { value: "cancel", label: "取消" },
     ],
   });
 
   if (deps.prompts.isCancel(action) || action === "cancel") {
-    deps.prompts.outro("Cancelled.");
+    deps.prompts.outro("已取消。");
     return false;
   }
   return true;
@@ -78,34 +78,6 @@ export async function stepTracker(deps: InitDeps): Promise<{
   return { config: result.config, credentials: result.credentials };
 }
 
-export async function stepAgent(
-  deps: InitDeps,
-): Promise<Record<string, unknown> | null> {
-  const p = deps.prompts;
-
-  const found = await deps.checkClaudeCli();
-  if (!found) {
-    p.log.warn(
-      "Claude CLI not found in PATH. Agent commands will fail until installed.",
-    );
-  }
-
-  const approvalPolicy = await p.select({
-    message: "Agent 审批策略（控制 AI 执行命令时是否需要人工确认）",
-    options: [
-      { value: "auto", label: "auto（推荐）", hint: "自动执行，无需人工确认" },
-      { value: "suggest", label: "suggest", hint: "每次执行前询问你确认" },
-    ],
-  });
-  if (p.isCancel(approvalPolicy)) return null;
-
-  return {
-    config: {
-      approval_policy: approvalPolicy,
-    },
-  };
-}
-
 export async function stepWorkspace(
   deps: InitDeps,
 ): Promise<Record<string, unknown> | null> {
@@ -138,12 +110,12 @@ export async function stepWorkspace(
 
   if (sourceType === "git-worktree") {
     const repo = await p.text({
-      message: "Git repository path (must be an existing git repo)",
+      message: "Git 仓库路径（必须是已存在的本地仓库）",
       placeholder: "~/Workspace/my-project",
     });
     if (p.isCancel(repo)) return null;
     const clonePath = await p.text({
-      message: "Clone path name in workspace",
+      message: "工作区中的目录名称",
       defaultValue: "repo",
     });
     if (p.isCancel(clonePath)) return null;
@@ -197,7 +169,7 @@ export async function stepTemplate(deps: InitDeps): Promise<string | null> {
   const content = loadTemplate(selected as string);
   p.note(
     content.slice(0, 500) + (content.length > 500 ? "\n..." : ""),
-    "Template preview",
+    "模板预览",
   );
 
   return content;
@@ -225,5 +197,5 @@ export async function writeGlobalSettings(
     mkdirSync(settingsDir, { recursive: true });
   }
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-  prompts.log.success(`Credentials written to ${settingsPath}`);
+  prompts.log.success(`凭据已写入 ${settingsPath}`);
 }

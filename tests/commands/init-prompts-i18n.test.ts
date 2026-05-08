@@ -1,7 +1,6 @@
 import { test, describe, expect } from "bun:test";
 import {
   stepTracker,
-  stepAgent,
   stepWorkspace,
 } from "../../src/setup/steps.ts";
 import { initCommand } from "../../src/setup/wizard.ts";
@@ -162,44 +161,7 @@ describe("stepTracker prompt messages", () => {
   });
 });
 
-// --- stepAgent prompt messages ---
-
-describe("stepAgent prompt messages", () => {
-  test("approval policy options include Chinese hints", async () => {
-    const mock = createCapturingMock();
-    const deps: InitDeps = {
-      prompts: mock.prompts,
-      createSetupApi: () => createMockSetupApi(),
-      checkClaudeCli: async () => true,
-      homedir: () => "/tmp/test-home",
-    };
-    mock.enqueue("auto");
-
-    await stepAgent(deps);
-
-    expect(mock.capturedSelects.length).toBe(1);
-    const select = mock.capturedSelects[0];
-    // Should have hints
-    const hints = select.optionHints.filter((h) => h.length > 0);
-    expect(hints.length).toBeGreaterThan(0);
-  });
-
-  test("approval policy message is in Chinese", async () => {
-    const mock = createCapturingMock();
-    const deps: InitDeps = {
-      prompts: mock.prompts,
-      createSetupApi: () => createMockSetupApi(),
-      checkClaudeCli: async () => true,
-      homedir: () => "/tmp/test-home",
-    };
-    mock.enqueue("auto");
-
-    await stepAgent(deps);
-
-    const select = mock.capturedSelects[0];
-    expect(select.message).toContain("审批策略");
-  });
-});
+// --- stepAgent has been removed; approval_policy defaults to "auto" ---
 
 // --- stepWorkspace prompt messages ---
 
@@ -253,8 +215,7 @@ describe("initCommand intro message", () => {
     };
     mock.enqueue(
       "cli_test_app", "test_secret", "",
-      "auto",
-      "none", "/tmp/test-ws",
+      "none",
       "basic.md",
     );
 
@@ -267,8 +228,8 @@ describe("initCommand intro message", () => {
       n.title.includes("欢迎"),
     );
     expect(welcomeNote).toBeDefined();
-    expect(welcomeNote!.content).toContain("飞书");
-    expect(welcomeNote!.content).toContain("Agent");
+    expect(welcomeNote!.content).toContain("追踪器");
     expect(welcomeNote!.content).toContain("工作区");
+    expect(welcomeNote!.content).toContain("Prompt");
   });
 });

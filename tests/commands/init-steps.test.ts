@@ -2,7 +2,6 @@ import { test, describe, expect, beforeEach, afterEach } from "bun:test";
 import { createMockPrompts, CANCEL } from "../__mocks__/clack-prompts.ts";
 import {
   stepTracker,
-  stepAgent,
   stepWorkspace,
   stepTemplate,
   checkExistingWorkflow,
@@ -272,55 +271,6 @@ describe("stepTracker", () => {
 
     const result = await stepTracker(deps);
     expect(result).toBeNull();
-  });
-});
-
-// --- stepAgent ---
-
-describe("stepAgent", () => {
-  test("happy path with defaults", async () => {
-    const { deps, enqueue } = createMockDeps();
-    enqueue("auto");
-
-    const result = await stepAgent(deps);
-    expect(result).not.toBeNull();
-    expect((result!.config as Record<string, unknown>).approval_policy).toBe("auto");
-  });
-
-  test("custom approval policy", async () => {
-    const { deps, enqueue } = createMockDeps();
-    enqueue("suggest");
-
-    const result = await stepAgent(deps);
-    expect((result!.config as Record<string, unknown>).approval_policy).toBe("suggest");
-  });
-
-  test("returns null on cancel", async () => {
-    const { deps, enqueue } = createMockDeps();
-    enqueue(CANCEL);
-
-    const result = await stepAgent(deps);
-    expect(result).toBeNull();
-  });
-
-  test("warns when Claude CLI not found", async () => {
-    const { prompts, enqueue, reset } = createMockPrompts();
-    const warnMessages: string[] = [];
-    const origWarn = prompts.log.warn;
-    prompts.log.warn = (msg: string) => warnMessages.push(msg);
-
-    const deps: InitDeps = {
-      prompts,
-      createSetupApi: () => createMockSetupApi(),
-      checkClaudeCli: async () => false,
-      homedir: () => "/tmp/test-home",
-    };
-    enqueue("auto");
-
-    await stepAgent(deps);
-    expect(warnMessages.length).toBeGreaterThan(0);
-    expect(warnMessages[0]).toContain("Claude CLI not found");
-    prompts.log.warn = origWarn;
   });
 });
 
