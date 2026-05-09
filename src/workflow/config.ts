@@ -120,6 +120,9 @@ export function buildServiceConfig(
     if (typeof tracker.gitlab_token === "string") {
       tracker.gitlab_token = resolveEnvValue(tracker.gitlab_token) as string | undefined;
     }
+    if (typeof tracker.github_token === "string") {
+      tracker.github_token = resolveEnvValue(tracker.github_token) as string | undefined;
+    }
   }
 
   if (config.workspace && typeof config.workspace === "object") {
@@ -166,6 +169,12 @@ export function validateDispatchConfig(config: ServiceConfig): string | null {
     if (!config.tracker.gitlab_host) return "tracker.gitlab_host is required for gitlab_issues";
     if (!config.tracker.gitlab_token) return "tracker.gitlab_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITLAB_TOKEN)";
     if (!config.tracker.project_id) return "tracker.project_id is required for gitlab_issues";
+  }
+  if (config.tracker.kind === "github_issues") {
+    if (!config.tracker.github_host) return "tracker.github_host is required for github_issues";
+    if (!config.tracker.github_token) return "tracker.github_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITHUB_TOKEN)";
+    if (!config.tracker.owner) return "tracker.owner is required for github_issues";
+    if (!config.tracker.repo) return "tracker.repo is required for github_issues";
   }
   // Check agent kind is specified
   if (!config.agent.kind) return "agent.kind is required";

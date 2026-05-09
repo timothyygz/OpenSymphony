@@ -64,12 +64,45 @@ export interface WizardResult {
   credentials?: Record<string, string>;
 }
 
+// --- CLI argument types (forward reference) ---
+
+export interface InitArgs {
+  nonInteractive?: boolean;
+  tracker?: string;
+  template?: string;
+  approvalPolicy?: string;
+  workspaceRoot?: string;
+  exportPath?: string;
+  importPath?: string;
+  dryRun?: boolean;
+  appId?: string;
+  appSecret?: string;
+  appToken?: string;
+  tableId?: string;
+  gitlabHost?: string;
+  gitlabToken?: string;
+  projectId?: string;
+  activeStates?: string;
+  terminalStates?: string;
+  githubHost?: string;
+  githubToken?: string;
+  githubOwner?: string;
+  githubRepo?: string;
+  workspaceType?: string;
+  gitUrl?: string;
+  gitPath?: string;
+  gitBranch?: string;
+  gitRepo?: string;
+}
+
 // --- Tracker setup function types ---
 
 export interface TrackerSetupContext {
   prompts: Prompts;
   /** Optional overrides for testing (e.g., mock API factories) */
   testOverrides?: Record<string, unknown>;
+  /** Optional CLI args for pre-filling values */
+  initArgs?: InitArgs;
 }
 
 export interface TrackerSetupResult {
@@ -78,3 +111,19 @@ export interface TrackerSetupResult {
 }
 
 export type TrackerSetupFn = (ctx: TrackerSetupContext) => Promise<TrackerSetupResult>;
+
+// --- Export/Import types ---
+
+export interface ExportData {
+  version: 1;
+  exportedAt: string;
+  tracker: {
+    kind: string;
+    config: Record<string, unknown>;
+    credentials?: Record<string, string>;
+  };
+  agent: Record<string, unknown>;
+  workspace: Record<string, unknown>;
+  polling: Record<string, unknown>;
+  promptTemplate: string;
+}

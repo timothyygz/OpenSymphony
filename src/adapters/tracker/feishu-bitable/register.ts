@@ -287,4 +287,9 @@ export const feishuBitableSetup: TrackerSetupFn = async (ctx) => {
   };
 };
 
-registerTracker("feishu_bitable", createFeishuBitableAdapter, feishuBitableSetup);
+registerTracker("feishu_bitable", createFeishuBitableAdapter, feishuBitableSetup, {
+  label: "飞书多维表格 (Feishu Bitable)",
+  description: "使用飞书多维表格作为看板，可视化任务管理",
+  recommended: true,
+  category: "feishu",
+});

@@ -309,7 +309,7 @@ export class Orchestrator {
         runtimeSeconds: (Date.now() - entry.startedAt.getTime()) / 1000,
         completedAt: new Date(),
       });
-      if (this.state.recentCompleted.length > 10) {
+      while (this.state.recentCompleted.length > 10) {
         this.state.recentCompleted.shift();
       }
     } else {

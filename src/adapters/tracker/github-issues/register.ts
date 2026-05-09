@@ -1,65 +1,76 @@
 import { registerTracker } from "../registry.ts";
 import type { TrackerSetupFn } from "../../setup/types.ts";
-import { createGitLabIssuesAdapter } from "./adapter.ts";
-import { GitLabApi } from "./api.ts";
+import { createGitHubIssuesAdapter } from "./adapter.ts";
+import { GitHubApi } from "./api.ts";
 
 const SYMPHONY_LABELS = [
-  { name: "symphony::Todo", color: "#428BCA" },
-  { name: "symphony::In Progress", color: "#F0AD4E" },
-  { name: "symphony::Done", color: "#5CB85C" },
-  { name: "symphony::Cancelled", color: "#D9534F" },
+  { name: "symphony::Todo", color: "0075ca" },
+  { name: "symphony::In Progress", color: "fbca04" },
+  { name: "symphony::Done", color: "0e8a16" },
+  { name: "symphony::Cancelled", color: "b60205" },
 ];
 
-export const gitlabSetup: TrackerSetupFn = async (ctx) => {
+export const githubSetup: TrackerSetupFn = async (ctx) => {
   const p = ctx.prompts;
 
   p.note(
-    "需要 GitLab Personal Access Token 来访问 Issues API。\n\n" +
-      "创建方式：GitLab → Settings → Access Tokens\n" +
-      "  - 勾选 api 权限\n" +
+    "需要 GitHub Personal Access Token 来访问 Issues API。\n\n" +
+      "创建方式：GitHub → Settings → Developer settings → Personal access tokens\n" +
+      "  - 勾选 repo 权限\n" +
       "  - 建议设置合理的过期时间\n\n" +
-      "如果是自托管 GitLab，请填写完整的 GitLab 地址。",
-    "📋 GitLab 配置",
+      "如果是 GitHub Enterprise，请填写完整的 GitHub 地址。",
+    "📋 GitHub 配置",
   );
 
   const section = await p.group({
     host: () =>
       p.text({
-        message: "GitLab 地址",
-        placeholder: "https://gitlab.com",
-        defaultValue: "https://gitlab.com",
+        message: "GitHub 地址",
+        placeholder: "https://github.com",
+        defaultValue: "https://github.com",
       }),
     token: () =>
       p.text({
-        message: "Personal Access Token（需要 api 权限）",
-        placeholder: "glpat-xxxxxxxxxxxx",
+        message: "Personal Access Token（需要 repo 权限）",
+        placeholder: "ghp_xxxxxxxxxxxx",
       }),
-    projectId: () =>
+    owner: () =>
       p.text({
-        message: "项目 ID 或路径（如 group/project 或数字 ID）",
-        placeholder: "123",
+        message: "仓库所有者（用户名或组织名）",
+        placeholder: "my-org",
+      }),
+    repo: () =>
+      p.text({
+        message: "仓库名",
+        placeholder: "my-repo",
       }),
   });
 
   if (p.isCancel(section)) return { config: {} };
 
-  const host = (section.host as string) || "https://gitlab.com";
+  const host = (section.host as string) || "https://github.com";
   const token = section.token as string;
-  const projectId = String(section.projectId);
+  const owner = section.owner as string;
+  const repo = section.repo as string;
 
-  if (!token || !projectId) {
-    p.log.error("Token 和项目 ID 为必填项");
+  if (!token || !owner || !repo) {
+    p.log.error("Token、所有者和仓库名为必填项");
     return { config: {} };
   }
 
-  const api = new GitLabApi({ host, token, projectId });
+  const api = new GitHubApi({
+    host,
+    token,
+    owner,
+    repo,
+  });
 
   // Test connection
   const s = p.spinner();
-  s.start("Testing GitLab connection...");
+  s.start("Testing GitHub connection...");
   try {
-    const project = await api.testConnection();
-    s.stop(`Connected to: ${project.name}`);
+    const repository = await api.testConnection();
+    s.stop(`Connected to: ${repository.name}`);
   } catch (err) {
     s.stop("Connection failed");
     p.log.error(`Connection error: ${err instanceof Error ? err.message : String(err)}`);
@@ -101,20 +112,21 @@ export const gitlabSetup: TrackerSetupFn = async (ctx) => {
 
   return {
     config: {
-      kind: "gitlab_issues",
-      gitlab_host: host,
-      project_id: projectId,
+      kind: "github_issues",
+      github_host: host || "https://github.com",
+      owner,
+      repo,
       active_states: (activeStates as string).split(",").map((s) => s.trim()),
       terminal_states: (terminalStates as string).split(",").map((s) => s.trim()),
     },
     credentials: {
-      gitlab_token: token,
+      github_token: token,
     },
   };
 };
 
-registerTracker("gitlab_issues", createGitLabIssuesAdapter, gitlabSetup, {
-  label: "GitLab Issues",
-  description: "使用 GitLab Issues 和标签管理任务状态",
+registerTracker("github_issues", createGitHubIssuesAdapter, githubSetup, {
+  label: "GitHub Issues",
+  description: "使用 GitHub Issues 和标签管理任务状态",
   category: "git-hosting",
 });
