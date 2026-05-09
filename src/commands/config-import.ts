@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { objectToYaml, loadTemplate } from "../setup/yaml.ts";
 import { validateImportData } from "../setup/validate.ts";
 import type { ExportData } from "../setup/types.ts";
+import { availableTrackerKinds } from "../adapters/tracker/registry.ts";
 
 async function configImportCommand(args: string[]): Promise<void> {
   const inputFile = args.find((a) => !a.startsWith("-"));
@@ -40,6 +41,17 @@ async function configImportCommand(args: string[]): Promise<void> {
   }
 
   const data = rawData as ExportData;
+
+  // Validate that the tracker kind is known
+  // Ensure tracker adapters are registered so availableTrackerKinds() works
+  await import("../adapters/tracker/feishu-bitable/register.ts");
+  await import("../adapters/tracker/gitlab-issues/register.ts");
+  await import("../adapters/tracker/github-issues/register.ts");
+  const validKinds = availableTrackerKinds();
+  if (!validKinds.includes(data.tracker.kind)) {
+    console.error(`Unknown tracker kind: "${data.tracker.kind}". Available kinds: ${validKinds.join(", ")}`);
+    process.exit(1);
+  }
 
   // Build the workflow YAML
   const trackerYaml = objectToYaml(data.tracker.config, 1);

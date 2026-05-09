@@ -1,7 +1,6 @@
 import type { Issue } from "../../../model/index.ts";
 import type { GitHubIssueResponse } from "./api.ts";
-
-const SYMPHONY_LABEL_PREFIX = "symphony::";
+import { SYMPHONY_LABEL_PREFIX } from "./adapter.ts";
 
 export function extractSymphonyState(labels: Array<{ name: string }>, fallbackState: string): string {
   for (const label of labels) {

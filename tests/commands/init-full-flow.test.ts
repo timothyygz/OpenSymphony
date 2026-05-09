@@ -59,6 +59,8 @@ function happyPathAnswers(overrides: Partial<{
     "new",
     // phone (empty = skip transfer)
     overrides.phone ?? "",
+    // stepAgent: approval policy
+    "auto",
     // stepWorkspace: sourceType
     sourceType,
   ];
@@ -123,7 +125,7 @@ describe("initCommand full flow", () => {
   test("cancel at workspace step — no file written", async () => {
     const { deps, enqueue } = createFlowDeps(tempDir);
     // stepTracker completes, then cancel at workspace step
-    enqueue("feishu_bitable", "cli_app", "secret", "new", "", CANCEL);
+    enqueue("feishu_bitable", "cli_app", "secret", "new", "", "auto", CANCEL);
 
     await initCommand([tempDir], deps);
 

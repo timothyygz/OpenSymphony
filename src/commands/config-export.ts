@@ -78,6 +78,7 @@ async function configExportCommand(args: string[]): Promise<void> {
     delete safeConfig.app_secret;
     delete safeConfig.gitlab_token;
     delete safeConfig.api_key;
+    delete safeConfig.github_token;
     exportData.tracker.config = safeConfig;
   }
 

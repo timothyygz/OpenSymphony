@@ -6,7 +6,7 @@ import { mapGitHubIssueToIssue, extractSymphonyState, extractNonSymphonyLabels }
 import { logger } from "../../../logging/logger.ts";
 import { createTrackerMcpServer } from "../../agent/claude-code/tracker-tools.ts";
 
-const SYMPHONY_LABEL_PREFIX = "symphony::";
+export const SYMPHONY_LABEL_PREFIX = "symphony::";
 
 export interface GitHubIssuesConfig {
   host: string;
@@ -176,7 +176,7 @@ export function createGitHubIssuesAdapter(rawConfig: Record<string, unknown>): T
     owner: rawConfig.owner as string,
     repo: rawConfig.repo as string,
     labelPrefix: (rawConfig.label_prefix as string) ?? SYMPHONY_LABEL_PREFIX,
-    activeStates: (rawConfig.active_states as string[]) ?? ["Todo", "In Progress"],
-    terminalStates: (rawConfig.terminal_states as string[]) ?? ["Done", "Cancelled"],
+    activeStates: (rawConfig.active_states as string[] | undefined) ?? ["Todo", "In Progress"],
+    terminalStates: (rawConfig.terminal_states as string[] | undefined) ?? ["Done", "Cancelled"],
   });
 }

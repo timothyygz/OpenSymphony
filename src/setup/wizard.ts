@@ -4,6 +4,7 @@ import { symphonyHome, symphonySettings } from "../paths.ts";
 import type { InitDeps, WizardResult } from "./types.ts";
 import { buildWorkflowYaml } from "./yaml.ts";
 import { validateWizardResult } from "./validate.ts";
+import { generateTrackerSkill } from "./skill-generator.ts";
 import {
   checkExistingWorkflow,
   stepTracker,
@@ -238,7 +239,13 @@ export async function initCommand(
   }
 
   const outputPath = resolve(targetPath, "WORKFLOW.md");
-  p.outro(
-    `WORKFLOW.md 已写入 ${outputPath}\n你可以编辑 WORKFLOW.md 来自定义每次启动 agent 时的 prompt`,
-  );
+  const skillPath = generateTrackerSkill(result, deps.homedir());
+
+  const outroLines = [`WORKFLOW.md 已写入 ${outputPath}`];
+  if (skillPath) {
+    outroLines.push(`Task skill 已生成 ${skillPath}/SKILL.md`);
+  }
+  outroLines.push("你可以编辑 WORKFLOW.md 来自定义每次启动 agent 时的 prompt");
+
+  p.outro(outroLines.join("\n"));
 }

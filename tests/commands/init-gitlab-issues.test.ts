@@ -278,6 +278,8 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
+      // stepAgent: approval policy
+      "auto",
       // stepWorkspace
       sourceType,
     ];
@@ -359,6 +361,7 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
+      "auto",
       "none",
       CANCEL, // cancel at template
     );
@@ -376,6 +379,7 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
+      "auto",
       CANCEL, // cancel at workspace
     );
 
