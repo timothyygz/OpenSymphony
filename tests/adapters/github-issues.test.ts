@@ -253,9 +253,7 @@ describe("initCommand full flow — github_issues", () => {
 
   function githubHappyPathAnswers(overrides: Partial<{
     template: string;
-    sourceType: string;
   }> = {}): unknown[] {
-    const sourceType = overrides.sourceType ?? "none";
     const answers: unknown[] = [
       // stepTracker
       "github_issues",
@@ -263,18 +261,9 @@ describe("initCommand full flow — github_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
-      // stepAgent
-      "auto",
-      // stepWorkspace
-      sourceType,
+      // stepTemplate
+      overrides.template ?? "basic.md",
     ];
-    if (sourceType === "git-worktree") {
-      answers.push("~/Workspace/repo", "repo");
-    } else if (sourceType === "git-clone") {
-      answers.push("git@github.com:org/repo.git", "repo", "main");
-    }
-    // stepTemplate
-    answers.push(overrides.template ?? "basic.md");
     return answers;
   }
 

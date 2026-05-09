@@ -5,9 +5,12 @@ import {
   stepWorkspace,
   stepTemplate,
   checkExistingWorkflow,
+  renderTemplatePreview,
 } from "../../src/setup/steps.ts";
 import { parseBitableUrl } from "../../src/setup/url.ts";
+import { parseWorkflowFile, buildWorkflowYaml } from "../../src/setup/yaml.ts";
 import type { InitDeps, SetupApi } from "../../src/setup/types.ts";
+import type { WizardResult } from "../../src/setup/types.ts";
 import { STANDARD_FIELDS } from "../../src/adapters/tracker/feishu-bitable/setup-api.ts";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -381,19 +384,28 @@ describe("checkExistingWorkflow", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test("returns true when no WORKFLOW.md exists", async () => {
+  test("returns 'new' when no WORKFLOW.md exists", async () => {
     const { deps } = createMockDeps();
     const result = await checkExistingWorkflow(deps, tempDir);
-    expect(result).toBe(true);
+    expect(result).toBe("new");
   });
 
-  test("returns true when user chooses overwrite", async () => {
+  test("returns 'overwrite' when user chooses overwrite", async () => {
     writeFileSync(join(tempDir, "WORKFLOW.md"), "old content");
     const { deps, enqueue } = createMockDeps();
     enqueue("overwrite");
 
     const result = await checkExistingWorkflow(deps, tempDir);
-    expect(result).toBe(true);
+    expect(result).toBe("overwrite");
+  });
+
+  test("returns 'reconfigure' when user chooses reconfigure", async () => {
+    writeFileSync(join(tempDir, "WORKFLOW.md"), "old content");
+    const { deps, enqueue } = createMockDeps();
+    enqueue("reconfigure");
+
+    const result = await checkExistingWorkflow(deps, tempDir);
+    expect(result).toBe("reconfigure");
   });
 
   test("returns false when user chooses cancel", async () => {
@@ -443,5 +455,82 @@ describe("parseBitableUrl", () => {
 
   test("returns null for random string", () => {
     expect(parseBitableUrl("just-some-text")).toBeNull();
+  });
+});
+
+// --- parseWorkflowFile ---
+
+describe("parseWorkflowFile", () => {
+  test("parses valid WORKFLOW.md content", () => {
+    const result: WizardResult = {
+      tracker: { kind: "feishu_bitable", app_token: "basTest", table_id: "tblX" },
+      workspace: { root: "~/.open-symphony/workspace" },
+      agent: { config: { approval_policy: "auto" } },
+      promptTemplate: "You are an AI assistant.\nWork on task {{ id }}.",
+    };
+    const content = buildWorkflowYaml(result);
+    const parsed = parseWorkflowFile(content);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.tracker.kind).toBe("feishu_bitable");
+    expect(parsed!.tracker.app_token).toBe("basTest");
+    expect(parsed!.workspace.root).toBe("~/.open-symphony/workspace");
+    expect(parsed!.promptTemplate).toContain("You are an AI assistant");
+    expect(parsed!.promptTemplate).toContain("{{ id }}");
+  });
+
+  test("returns null for content without YAML frontmatter", () => {
+    expect(parseWorkflowFile("just plain text")).toBeNull();
+  });
+
+  test("returns null for empty string", () => {
+    expect(parseWorkflowFile("")).toBeNull();
+  });
+
+  test("returns null for invalid YAML", () => {
+    expect(parseWorkflowFile("---\n[\n---\ntemplate")).toBeNull();
+  });
+});
+
+// --- renderTemplatePreview ---
+
+describe("renderTemplatePreview", () => {
+  test("replaces LiquidJS variables with sample data", () => {
+    const template = "{{ issue.identifier }}: {{ issue.title }}";
+    const result = renderTemplatePreview(template);
+    expect(result).toBe("TASK-20260508-20: 优化setup模块");
+    expect(result).not.toContain("{{");
+  });
+
+  test("replaces issue.description with sample", () => {
+    const template = "Description: {{ issue.description }}";
+    const result = renderTemplatePreview(template);
+    expect(result).toContain("持续优化setup模块");
+  });
+
+  test("replaces state, priority, and labels", () => {
+    const template = "State: {{ issue.state }}, Priority: {{ issue.priority }}";
+    const result = renderTemplatePreview(template);
+    expect(result).toContain("进行中");
+    expect(result).toContain("高");
+  });
+
+  test("removes LiquidJS control flow blocks", () => {
+    const template = "Hello\n{% if attempt %}\nRetry #{{ attempt }}\n{% endif %}\nDone";
+    const result = renderTemplatePreview(template);
+    expect(result).not.toContain("{%");
+    expect(result).not.toContain("%}");
+    // Should still contain the content (attempt is replaced)
+    expect(result).toContain("Hello");
+    expect(result).toContain("Done");
+  });
+
+  test("handles empty template", () => {
+    expect(renderTemplatePreview("")).toBe("");
+  });
+
+  test("handles template with no variables", () => {
+    const template = "Just plain text";
+    expect(renderTemplatePreview(template)).toBe("Just plain text");
   });
 });

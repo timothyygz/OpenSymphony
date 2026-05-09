@@ -264,13 +264,10 @@ describe("initCommand full flow — gitlab_issues", () => {
 
   // Answer sequence for gitlab happy path:
   // stepTracker: kind, group(host,token,projectId), createLabels, activeStates, terminalStates
-  // stepWorkspace: sourceType (none)
   // stepTemplate: template file
   function gitlabHappyPathAnswers(overrides: Partial<{
     template: string;
-    sourceType: string;
   }> = {}): unknown[] {
-    const sourceType = overrides.sourceType ?? "none";
     const answers: unknown[] = [
       // stepTracker
       "gitlab_issues",
@@ -278,18 +275,9 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
-      // stepAgent: approval policy
-      "auto",
-      // stepWorkspace
-      sourceType,
+      // stepTemplate
+      overrides.template ?? "basic.md",
     ];
-    if (sourceType === "git-worktree") {
-      answers.push("~/Workspace/repo", "repo");
-    } else if (sourceType === "git-clone") {
-      answers.push("git@gitlab.example.com:org/repo.git", "repo", "main");
-    }
-    // stepTemplate
-    answers.push(overrides.template ?? "basic.md");
     return answers;
   }
 
@@ -323,16 +311,17 @@ describe("initCommand full flow — gitlab_issues", () => {
     expect(settings.tracker.gitlab_issues.gitlab_token).toBe("glpat-test-token");
   });
 
-  test("happy path — with git-clone workspace", async () => {
+  test("happy path — workspace defaults to none", async () => {
     const { deps, enqueue } = createMockDeps();
     deps.homedir = () => tempDir;
-    enqueue(...gitlabHappyPathAnswers({ sourceType: "git-clone" }));
+    enqueue(...gitlabHappyPathAnswers());
 
     await initCommand([tempDir], deps);
 
     const content = readFileSync(join(tempDir, "WORKFLOW.md"), "utf-8");
     expect(content).toContain("kind: gitlab_issues");
-    expect(content).toContain("git@gitlab.example.com:org/repo.git");
+    // Workspace should have default root with no sources
+    expect(content).toContain("~/.open-symphony/workspace");
   });
 
   test("cancel at tracker kind selection — no file written", async () => {
@@ -361,26 +350,7 @@ describe("initCommand full flow — gitlab_issues", () => {
       true,
       "Todo,In Progress",
       "Done,Cancelled",
-      "auto",
-      "none",
       CANCEL, // cancel at template
-    );
-
-    await initCommand([tempDir], deps);
-
-    expect(existsSync(join(tempDir, "WORKFLOW.md"))).toBe(false);
-  });
-
-  test("cancel at workspace step — no file written", async () => {
-    const { deps, enqueue } = createMockDeps();
-    enqueue(
-      "gitlab_issues",
-      "https://gitlab.com", "glpat-token", "42",
-      true,
-      "Todo,In Progress",
-      "Done,Cancelled",
-      "auto",
-      CANCEL, // cancel at workspace
     );
 
     await initCommand([tempDir], deps);

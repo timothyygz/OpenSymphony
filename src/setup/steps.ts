@@ -12,16 +12,16 @@ import { loadTemplate, TEMPLATE_PRESETS } from "./yaml.ts";
 export async function checkExistingWorkflow(
   deps: InitDeps,
   targetPath: string,
-): Promise<boolean> {
+): Promise<"new" | "reconfigure" | "overwrite" | false> {
   const filePath = resolve(targetPath, "WORKFLOW.md");
-  if (!existsSync(filePath)) return true;
+  if (!existsSync(filePath)) return "new";
 
   const action = await deps.prompts.select({
     message: "WORKFLOW.md already exists. What would you like to do?",
     options: [
-      { value: "backup", label: "Backup and overwrite", hint: "保存旧文件为 WORKFLOW.md.bak 后覆盖" },
-      { value: "overwrite", label: "Overwrite" },
-      { value: "cancel", label: "Cancel" },
+      { value: "reconfigure", label: "编辑已有配置", hint: "查看当前配置并重新选择" },
+      { value: "overwrite", label: "覆盖已有配置", hint: "从头开始配置向导" },
+      { value: "cancel", label: "取消" },
     ],
   });
 
@@ -29,14 +29,7 @@ export async function checkExistingWorkflow(
     deps.prompts.outro("Cancelled.");
     return false;
   }
-
-  if (action === "backup") {
-    const backupPath = filePath + ".bak";
-    copyFileSync(filePath, backupPath);
-    deps.prompts.log.success(`Backup saved to ${backupPath}`);
-  }
-
-  return true;
+  return action as "reconfigure" | "overwrite";
 }
 
 export async function stepTracker(deps: InitDeps, initArgs?: InitArgs): Promise<{
@@ -172,6 +165,7 @@ export async function stepWorkspace(
     sourceType = await p.select({
       message: "工作区来源类型（决定每个任务如何获取代码）",
       options: [
+        { value: "none", label: "无（推荐）", hint: "不使用代码仓库，适合快速上手" },
         {
           value: "git-worktree",
           label: "Git worktree",
@@ -182,7 +176,6 @@ export async function stepWorkspace(
           label: "Git clone",
           hint: "自动 clone 仓库，适合远程/CI 环境",
         },
-        { value: "none", label: "无", hint: "不使用代码仓库" },
       ],
     });
     if (p.isCancel(sourceType)) return null;
@@ -291,11 +284,19 @@ export async function stepTemplate(deps: InitDeps, initArgs?: InitArgs): Promise
     }
   }
 
-  const templates = TEMPLATE_PRESETS.map((t) => ({
-    value: t.file,
-    label: t.name,
-    hint: loadTemplate(t.file).split("\n").slice(0, 2).join(" → "),
-  }));
+  const templates = TEMPLATE_PRESETS.map((t) => {
+    const content = loadTemplate(t.file);
+    // Show first meaningful line of template as preview
+    const preview = content
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0 && !l.startsWith("{%")) ?? "";
+    return {
+      value: t.file,
+      label: t.name,
+      hint: preview.length > 50 ? preview.slice(0, 47) + "..." : preview,
+    };
+  });
 
   const selected = await p.select({
     message: "选择 Prompt 模板（Agent 每次执行任务时会使用该模板作为初始指令）",
@@ -304,12 +305,44 @@ export async function stepTemplate(deps: InitDeps, initArgs?: InitArgs): Promise
   if (p.isCancel(selected)) return null;
 
   const content = loadTemplate(selected as string);
+
+  // Show a rendered preview with sample data
+  const sampleRendered = renderTemplatePreview(content);
   p.note(
-    content.slice(0, 500) + (content.length > 500 ? "\n..." : ""),
-    "Template preview",
+    sampleRendered,
+    "模板预览（示例渲染效果）",
   );
 
   return content;
+}
+
+/**
+ * Render a LiquidJS template with sample data for preview purposes.
+ * Uses simple string replacement instead of a full template engine.
+ */
+export function renderTemplatePreview(template: string): string {
+  const sampleData: Record<string, string> = {
+    "{{ issue.identifier }}": "TASK-20260508-20",
+    "{{ issue.title }}": "优化setup模块",
+    "{{ issue.description }}": "持续优化setup模块，改进用户体验...",
+    "{{ issue.state }}": "进行中",
+    "{{ issue.priority }}": "高",
+    '{{ issue.labels | join: ", " }}': "enhancement, UX",
+    '{{ issue.labels | join: "、" }}': "enhancement、UX",
+    "{{ attempt }}": "2",
+  };
+
+  let rendered = template;
+  for (const [placeholder, value] of Object.entries(sampleData)) {
+    rendered = rendered.replaceAll(placeholder, value);
+  }
+  // Remove LiquidJS control flow blocks
+  rendered = rendered
+    .replace(/\{%\s*else\s*%\}[\s\S]*?\{%\s*endif\s*%\}/g, "")
+    .replace(/\{%\s*if\s+.*?\s*%\}\n?/g, "")
+    .replace(/\{%\s*endif\s*%\}\n?/g, "");
+
+  return rendered;
 }
 
 export async function writeGlobalSettings(
