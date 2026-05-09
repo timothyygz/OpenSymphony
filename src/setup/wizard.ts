@@ -1,16 +1,89 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, copyFileSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
-import { DIR_NAME, symphonyHome } from "../paths.ts";
+import { DIR_NAME, symphonyHome, symphonySettings } from "../paths.ts";
 import type { InitDeps, WizardResult } from "./types.ts";
 import { buildWorkflowYaml, parseWorkflowFile, TEMPLATE_PRESETS, loadTemplate } from "./yaml.ts";
 import type { ParsedWorkflow } from "./yaml.ts";
+import { validateWizardResult } from "./validate.ts";
 import { generateTrackerSkill } from "./skill-generator.ts";
 import {
   checkExistingWorkflow,
   stepTracker,
+  stepAgent,
+  stepWorkspace,
   stepTemplate,
   writeGlobalSettings,
 } from "./steps.ts";
+import { parseArgs, type InitArgs } from "./args.ts";
+import { nonInteractiveInit } from "./non-interactive.ts";
+import { wizardResultToExportData, writeExportFile } from "./export.ts";
+
+// --- Backup/restore helpers for error recovery ---
+
+function backupIfExists(filePath: string): string | null {
+  if (!existsSync(filePath)) return null;
+  const backupPath = filePath + ".pre-setup.bak";
+  copyFileSync(filePath, backupPath);
+  return backupPath;
+}
+
+function restoreBackup(backupPath: string, originalPath: string): void {
+  if (existsSync(backupPath)) {
+    renameSync(backupPath, originalPath);
+  }
+}
+
+function cleanupBackup(backupPath: string | null): void {
+  if (backupPath && existsSync(backupPath)) {
+    unlinkSync(backupPath);
+  }
+}
+
+/**
+ * Write workflow and settings with atomic-like error recovery.
+ * Backs up existing files before writing; on failure, restores them.
+ */
+async function writeConfigWithRecovery(
+  targetPath: string,
+  workflowContent: string,
+  result: WizardResult,
+  prompts: InitDeps["prompts"],
+  homeDir: string,
+): Promise<boolean> {
+  const outputPath = resolve(targetPath, "WORKFLOW.md");
+  const settingsPath = symphonySettings(homeDir);
+
+  // Back up existing files
+  const workflowBackup = backupIfExists(outputPath);
+  const settingsBackup = backupIfExists(settingsPath);
+
+  try {
+    // Write WORKFLOW.md
+    if (!existsSync(targetPath)) {
+      mkdirSync(targetPath, { recursive: true });
+    }
+    writeFileSync(outputPath, workflowContent);
+
+    // Write credentials to settings.json
+    if (result.credentials) {
+      await writeGlobalSettings(result.credentials, result.tracker, prompts, homeDir);
+    }
+
+    // Success — clean up backups
+    cleanupBackup(workflowBackup);
+    cleanupBackup(settingsBackup);
+    return true;
+  } catch (err) {
+    // Restore backups on failure
+    if (workflowBackup) restoreBackup(workflowBackup, outputPath);
+    if (settingsBackup) restoreBackup(settingsBackup, settingsPath);
+    prompts.log.error(
+      `Failed to write configuration: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    prompts.log.info("Previous files have been restored from backup.");
+    return false;
+  }
+}
 
 export const TOTAL_STEPS = 2;
 
@@ -34,20 +107,59 @@ export async function initCommand(
   deps: InitDeps,
 ): Promise<void> {
   const p = deps.prompts;
+  const initArgs = parseArgs(args);
   const targetPath =
     args.find((a) => !a.startsWith("-")) ||
     symphonyHome(deps.homedir());
 
+  // Non-interactive mode
+  if (initArgs.nonInteractive) {
+    const result = nonInteractiveInit(initArgs);
+    if (!result.ok) {
+      console.error("Non-interactive setup failed:");
+      for (const err of result.errors) {
+        console.error(`  - ${err}`);
+      }
+      process.exit(1);
+    }
+
+    // --dry-run: print config and exit without writing
+    if (initArgs.dryRun) {
+      const workflowContent = buildWorkflowYaml(result.result!);
+      console.log("=== Dry Run: Configuration Preview ===");
+      console.log(workflowContent);
+      console.log("=== No files were written. ===");
+      return;
+    }
+
+    // --export: save config to a JSON file
+    if (initArgs.exportPath) {
+      const exportData = wizardResultToExportData(result.result!);
+      writeExportFile(exportData, initArgs.exportPath);
+      console.log(`Config exported to ${resolve(initArgs.exportPath)}`);
+      return;
+    }
+
+    const workflowContent = buildWorkflowYaml(result.result!);
+    const success = await writeConfigWithRecovery(
+      targetPath,
+      workflowContent,
+      result.result!,
+      p,
+      deps.homedir(),
+    );
+
+    if (success) {
+      console.log(`WORKFLOW.md written to ${resolve(targetPath, "WORKFLOW.md")}`);
+    } else {
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Interactive mode
   console.log("");
   p.intro("🎼 Symphony 配置向导");
-
-  // Check Claude CLI availability
-  const claudeFound = await deps.checkClaudeCli();
-  if (!claudeFound) {
-    p.log.warn(
-      "未检测到 Claude CLI，Agent 命令将无法执行。请先安装 Claude CLI。",
-    );
-  }
 
   // Check existing WORKFLOW.md
   const existingAction = await checkExistingWorkflow(deps, targetPath);
@@ -78,7 +190,7 @@ export async function initCommand(
   } else {
     p.note(
       "本向导将引导你完成以下配置：\n\n" +
-        "  1. 任务追踪器 — 连接飞书多维表格或 GitLab Issues\n" +
+        "  1. 任务追踪器 — 连接飞书多维表格、GitLab Issues 或 GitHub Issues\n" +
         "  2. Prompt 模板 — 定义 Agent 的初始指令\n\n" +
         `配置完成后将生成 WORKFLOW.md 文件。\n` +
         `工作区默认为 ~/${DIR_NAME}/workspace，可在 WORKFLOW.md 中修改。\n` +
@@ -97,17 +209,17 @@ export async function initCommand(
 
   // Step 1/2: Tracker
   showStep(p, 1, "任务追踪器", trackerHint);
-  const trackerResult = await stepTracker(deps);
+  const trackerResult = await stepTracker(deps, initArgs);
   if (!trackerResult) {
-    p.outro("配置已取消。");
+    p.outro("Setup cancelled.");
     return;
   }
 
   // Step 2/2: Prompt template
   showStep(p, 2, "Prompt 模板", templateHint);
-  const promptTemplate = await stepTemplate(deps);
+  const promptTemplate = await stepTemplate(deps, initArgs);
   if (!promptTemplate) {
-    p.outro("配置已取消。");
+    p.outro("Setup cancelled.");
     return;
   }
 
@@ -127,25 +239,50 @@ export async function initCommand(
     credentials: trackerResult.credentials,
   };
 
+  // Validate the assembled result
+  const validationErrors = validateWizardResult(result);
+  if (validationErrors.length > 0) {
+    p.log.error("Configuration validation failed:");
+    for (const err of validationErrors) {
+      p.log.error(`  - ${err}`);
+    }
+    p.outro("Setup failed. Please fix the errors above and try again.");
+    return;
+  }
+
   const workflowContent = buildWorkflowYaml(result);
 
-  // Write credentials to settings.json
-  if (result.credentials) {
-    await writeGlobalSettings(
-      result.credentials,
-      result.tracker,
-      p,
-      deps.homedir(),
-    );
+  // --dry-run: print config and exit without writing
+  if (initArgs.dryRun) {
+    p.note(workflowContent, "Dry Run: Configuration Preview");
+    p.outro("No files were written.");
+    return;
   }
 
-  // Write WORKFLOW.md
+  // --export: save config to a JSON file
+  if (initArgs.exportPath) {
+    const exportData = wizardResultToExportData(result);
+    writeExportFile(exportData, initArgs.exportPath);
+    p.log.success(`Config exported to ${resolve(initArgs.exportPath)}`);
+    p.outro("Export complete.");
+    return;
+  }
+
+  // Write with error recovery (backup + restore on failure)
+  const success = await writeConfigWithRecovery(
+    targetPath,
+    workflowContent,
+    result,
+    p,
+    deps.homedir(),
+  );
+
+  if (!success) {
+    p.outro("Setup failed during file write. Previous configuration has been restored.");
+    return;
+  }
+
   const outputPath = resolve(targetPath, "WORKFLOW.md");
-  if (!existsSync(targetPath)) {
-    mkdirSync(targetPath, { recursive: true });
-  }
-  writeFileSync(outputPath, workflowContent);
-
   const skillPath = generateTrackerSkill(result, deps.homedir());
 
   // Show completion summary with progress bar

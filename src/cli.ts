@@ -14,6 +14,8 @@ const SUBCOMMANDS = new Set([
   "task",
   "status",
   "config",
+  "config-export",
+  "config-import",
 ]);
 
 const COMMAND_MODULES: Record<string, () => Promise<void>> = {
@@ -24,6 +26,8 @@ const COMMAND_MODULES: Record<string, () => Promise<void>> = {
   task: () => import("./commands/task.ts"),
   status: () => import("./commands/status.ts"),
   config: () => import("./commands/config.ts"),
+  "config-export": () => import("./commands/config-export.ts"),
+  "config-import": () => import("./commands/config-import.ts"),
 };
 
 // --- Types ---
@@ -57,6 +61,8 @@ function printHelp(): void {
   console.log("  task <id> [path]       Show task detail");
   console.log("  status [path]          Kanban overview by state");
   console.log("  config [path]          Show current workflow config");
+  console.log("  config-export [path]   Export config to JSON (redacts credentials by default)");
+  console.log("  config-import <file>   Import config from JSON export file");
   console.log();
   console.log("Options:");
   console.log("  --no-tui               Run in headless mode (JSON logs to stdout)");
@@ -237,6 +243,7 @@ async function startOrchestrator(workflowPath: string | undefined, noTui: boolea
   // Register built-in adapters (after log file is configured — these trigger logger.debug)
   await import("./adapters/tracker/feishu-bitable/register.ts");
   await import("./adapters/tracker/gitlab-issues/register.ts");
+  await import("./adapters/tracker/github-issues/register.ts");
   await import("./adapters/agent/claude-code/register.ts");
 
   logger.info({ path: resolvedPath }, "Starting Symphony service");
