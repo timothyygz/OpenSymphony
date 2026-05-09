@@ -42,14 +42,11 @@ function createFlowDeps(tempDir: string, setupApiOverrides: Partial<SetupApi> = 
 // Answer sequence for a full happy path:
 // checkExistingWorkflow (no file → no prompt)
 // stepTracker: tracker kind selection, appId, appSecret (group), phone (empty)
-// stepWorkspace: sourceType, root
 // stepTemplate: template file
 function happyPathAnswers(overrides: Partial<{
   phone: string;
   template: string;
-  sourceType: string;
 }> = {}): unknown[] {
-  const sourceType = overrides.sourceType ?? "none";
   const answers: unknown[] = [
     // stepTracker: tracker kind selection
     "feishu_bitable",
@@ -59,19 +56,9 @@ function happyPathAnswers(overrides: Partial<{
     "new",
     // phone (empty = skip transfer)
     overrides.phone ?? "",
-    // stepWorkspace: sourceType
-    sourceType,
+    // stepTemplate: template file
+    overrides.template ?? "basic.md",
   ];
-  // stepWorkspace: additional prompts based on source type
-  if (sourceType === "none") {
-    // no more prompts
-  } else if (sourceType === "git-worktree") {
-    answers.push("~/Workspace/repo", "repo");
-  } else if (sourceType === "git-clone") {
-    answers.push("git@github.com:org/repo.git", "repo", "main");
-  }
-  // stepTemplate: template file
-  answers.push(overrides.template ?? "basic.md");
   return answers;
 }
 
@@ -102,6 +89,8 @@ describe("initCommand full flow", () => {
     expect(content).toContain("kind: feishu_bitable");
     expect(content).toContain("kind: claude-code");
     expect(content).toContain("identifier");
+    // Workspace should have default root with no sources
+    expect(content).toContain("~/.open-symphony/workspace");
 
     // settings.json should contain credentials
     const settingsPath = join(tempDir, ".open-symphony", "settings.json");
@@ -120,9 +109,9 @@ describe("initCommand full flow", () => {
     expect(existsSync(join(tempDir, "WORKFLOW.md"))).toBe(false);
   });
 
-  test("cancel at workspace step — no file written", async () => {
+  test("cancel at template step — no file written", async () => {
     const { deps, enqueue } = createFlowDeps(tempDir);
-    // stepTracker completes, then cancel at workspace step
+    // stepTracker completes, then cancel at template step
     enqueue("feishu_bitable", "cli_app", "secret", "new", "", CANCEL);
 
     await initCommand([tempDir], deps);
@@ -142,6 +131,24 @@ describe("initCommand full flow", () => {
     const content = readFileSync(join(tempDir, "WORKFLOW.md"), "utf-8");
     expect(content).toContain("kind: feishu_bitable");
     expect(content).not.toContain("old content");
+  });
+
+  test("reconfigure existing WORKFLOW.md — shows current config then re-runs wizard", async () => {
+    // Write a valid WORKFLOW.md
+    const { deps: deps1, enqueue: enqueue1 } = createFlowDeps(tempDir);
+    enqueue1(...happyPathAnswers());
+    await initCommand([tempDir], deps1);
+    const originalContent = readFileSync(join(tempDir, "WORKFLOW.md"), "utf-8");
+    expect(originalContent).toContain("kind: feishu_bitable");
+
+    // Reconfigure
+    const { deps: deps2, enqueue: enqueue2 } = createFlowDeps(tempDir);
+    enqueue2("reconfigure", ...happyPathAnswers({ template: "chinese.md" }));
+    await initCommand([tempDir], deps2);
+
+    const newContent = readFileSync(join(tempDir, "WORKFLOW.md"), "utf-8");
+    expect(newContent).toContain("kind: feishu_bitable");
+    expect(newContent).not.toBe(originalContent);
   });
 
   test("cancel on existing WORKFLOW.md — original preserved", async () => {
