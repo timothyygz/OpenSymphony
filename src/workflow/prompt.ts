@@ -46,14 +46,13 @@ export function buildContinuationGuidance(
   attempt: number | null,
 ): string {
   const parts = [
-    `Continuing work on ${issue.identifier}: ${issue.title}.`,
-    `Current state: ${issue.state}.`,
+    `Continuing work on ${issue.identifier}: ${issue.title}. Current state: ${issue.state}.`,
   ];
   if (attempt) {
-    parts.push(`This is retry attempt #${attempt}.`);
+    parts.push(`This is retry attempt #${attempt}. Resume from the current workspace state.`);
   }
   parts.push(
-    "If the task is complete, use the 'track_tool' tool to write a result summary and update the state to mark it done. Otherwise continue.",
+    "If the task is complete, use the 'tracker_tool' tool to write a result summary and update the state to mark it done. Otherwise continue.",
   );
   return parts.join(" ");
 }
