@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
-import { getCommand, getCommandNames } from "./commands/index.ts";
+import { dirname } from "node:path";
+import pino from "pino";
+import { getCommand } from "./commands/index.ts";
+import type { ServiceConfig, WorkflowDefinition } from "./model/index.ts";
 
 const BINARY_NAME = "opensymphony";
 
@@ -12,6 +15,36 @@ const SUBCOMMANDS = new Set([
   "status",
   "config",
 ]);
+
+const COMMAND_MODULES: Record<string, () => Promise<void>> = {
+  init: () => import("./commands/init.ts"),
+  doctor: () => import("./commands/doctor.ts"),
+  version: () => import("./commands/version.ts"),
+  tasks: () => import("./commands/tasks.ts"),
+  task: () => import("./commands/task.ts"),
+  status: () => import("./commands/status.ts"),
+  config: () => import("./commands/config.ts"),
+};
+
+// --- Types ---
+
+export interface ParsedArgs {
+  subcommand?: string;
+  workflowPath?: string;
+  unknownCommand?: string;
+  noTui: boolean;
+  json: boolean;
+  stateFilter?: string;
+  positional: string[];
+  help: boolean;
+}
+
+interface DashboardLike {
+  start(): void;
+  stop(): void;
+}
+
+// --- Helpers ---
 
 function printHelp(): void {
   console.log(`Usage: ${BINARY_NAME} <command> [options] [path]`);
@@ -36,91 +69,167 @@ function printHelp(): void {
 }
 
 function looksLikeCommand(arg: string): boolean {
-  // Heuristic: if it has no path separator and no dot, it's likely an intended command, not a file path
   return !arg.includes("/") && !arg.includes(".");
 }
 
-function parseArgs(args: string[]): { subcommand?: string; workflowPath?: string; unknownCommand?: string; noTui: boolean; json: boolean; stateFilter?: string; positional: string[] } {
+export function parseArgs(args: string[]): ParsedArgs {
   if (args.includes("--help") || args.includes("-h")) {
-    printHelp();
-    process.exit(0);
+    return { noTui: false, json: false, positional: [], help: true };
   }
+
   const noTui = args.includes("--no-tui");
   const json = args.includes("--json");
   const positional = args.filter((a) => !a.startsWith("-"));
 
-  // Extract --state <value>
   const stateIdx = args.indexOf("--state");
-  let stateFilter: string | undefined;
-  if (stateIdx !== -1 && args[stateIdx + 1]) {
-    stateFilter = args[stateIdx + 1];
-  }
+  const stateFilter = stateIdx !== -1 && args[stateIdx + 1]
+    ? args[stateIdx + 1]
+    : undefined;
 
   const first = positional[0];
   if (first && SUBCOMMANDS.has(first)) {
-    // For commands like 'task <id>', the remaining positional after the subcommand
-    // may include an id arg plus an optional path
-    return { subcommand: first, workflowPath: undefined, noTui, json, stateFilter, positional: positional.slice(1) };
+    return { subcommand: first, noTui, json, stateFilter, positional: positional.slice(1), help: false };
   }
   if (first && looksLikeCommand(first)) {
-    // Looks like an intended command but not recognized
-    return { unknownCommand: first, noTui, json, positional: [] };
+    return { unknownCommand: first, noTui, json, positional: [], help: false };
   }
-  return { workflowPath: first, noTui, json, positional: [] };
+  return { workflowPath: first, noTui, json, positional: [], help: false };
 }
 
-async function main() {
-  const { subcommand, workflowPath, unknownCommand, noTui, json, stateFilter, positional } = parseArgs(process.argv.slice(2));
+// --- Subcommand handling ---
 
-  if (unknownCommand) {
-    console.error(`Unknown command: ${unknownCommand}`);
-    console.error();
-    console.error(`Use '${BINARY_NAME} --help' to see available commands.`);
+async function handleSubcommand(
+  subcommand: string,
+  positional: string[],
+  flags: { json: boolean; stateFilter?: string; workflowPath?: string },
+): Promise<void> {
+  const loader = COMMAND_MODULES[subcommand];
+  if (loader) {
+    await loader();
+  }
+
+  const handler = getCommand(subcommand);
+  if (!handler) {
+    console.error(`Unknown command: ${subcommand}`);
     process.exit(1);
   }
 
-  if (subcommand) {
-    // Import command modules to trigger registration
-    if (subcommand === "init") await import("./commands/init.ts");
-    else if (subcommand === "doctor") await import("./commands/doctor.ts");
-    else if (subcommand === "version") await import("./commands/version.ts");
-    else if (subcommand === "tasks") await import("./commands/tasks.ts");
-    else if (subcommand === "task") await import("./commands/task.ts");
-    else if (subcommand === "status") await import("./commands/status.ts");
-    else if (subcommand === "config") await import("./commands/config.ts");
+  const cmdArgs = [...positional];
+  if (flags.workflowPath) cmdArgs.push(flags.workflowPath);
+  if (flags.json) process.env.OPENSYMPHONY_JSON = "1";
+  if (flags.stateFilter) process.env.OPENSYMPHONY_STATE_FILTER = flags.stateFilter;
+  await handler(cmdArgs);
+}
 
-    const handler = getCommand(subcommand);
-    if (!handler) {
-      console.error(`Unknown command: ${subcommand}`);
+// --- Orchestrator startup helpers ---
+
+export async function loadWorkflowOrExit(resolvedPath: string): Promise<WorkflowDefinition> {
+  const { loadWorkflow } = await import("./workflow/loader.ts");
+  const { MissingWorkflowFileError } = await import("./errors/errors.ts");
+
+  try {
+    return loadWorkflow(resolvedPath);
+  } catch (err) {
+    if (err instanceof MissingWorkflowFileError) {
+      console.error(`Workflow file not found: ${resolvedPath}`);
+      console.error();
+      console.error("Run 'opensymphony init' to create one, or specify a path:");
+      console.error("  opensymphony /path/to/WORKFLOW.md");
       process.exit(1);
     }
-    // Pass relevant args to the command handler
-    const cmdArgs = positional;
-    if (workflowPath) cmdArgs.push(workflowPath);
-    // Attach flags via env for commands to read
-    if (json) process.env.OPENSYMPHONY_JSON = "1";
-    if (stateFilter) process.env.OPENSYMPHONY_STATE_FILTER = stateFilter;
-    await handler(cmdArgs);
-    return;
+    throw err;
   }
+}
 
+export async function buildConfigAndValidate(
+  workflow: WorkflowDefinition,
+  workflowDir: string,
+): Promise<ServiceConfig> {
+  const { buildServiceConfig, validateDispatchConfig } = await import("./workflow/config.ts");
+  const { logger } = await import("./logging/logger.ts");
+
+  const config = buildServiceConfig(workflow.config, workflowDir);
+  const validationError = validateDispatchConfig(config);
+  if (validationError) {
+    logger.fatal({ error: validationError }, "Startup validation failed");
+    process.exit(1);
+  }
+  return config;
+}
+
+export interface OrchestratorServices {
+  tracker: import("./adapters/tracker/types.ts").TrackerAdapter;
+  agent: import("./adapters/agent/types.ts").AgentAdapter;
+  workspaceManager: import("./workspace/manager.ts").WorkspaceManager;
+  tokenStore: import("./metrics/token-store.ts").TokenStore;
+  executionLog: import("./logging/execution-log.ts").ExecutionLog;
+}
+
+export async function createServices(
+  config: ServiceConfig,
+  workflowDir: string,
+  logDir: string,
+): Promise<OrchestratorServices> {
+  const { createTracker } = await import("./adapters/tracker/registry.ts");
+  const { createAgent } = await import("./adapters/agent/registry.ts");
+  const { WorkspaceManager } = await import("./workspace/manager.ts");
+  const { TokenStore } = await import("./metrics/token-store.ts");
+  const { symphonyDb } = await import("./paths.ts");
+  const { ExecutionLog } = await import("./logging/execution-log.ts");
+
+  const tracker = createTracker(config.tracker.kind, { ...config.tracker });
+  const agent = createAgent(config.agent.kind, config.agent.config);
+
+  const workspaceManager = new WorkspaceManager({
+    root: config.workspace.root,
+    hooks: config.hooks,
+    sources: config.workspace.sources ?? [],
+    workflowDir,
+  });
+
+  const tokenStore = new TokenStore(symphonyDb());
+  const executionLog = new ExecutionLog(`${logDir}/.symphony-execution.jsonl`);
+
+  return { tracker, agent, workspaceManager, tokenStore, executionLog };
+}
+
+export function setupGracefulShutdown(deps: {
+  orchestrator: import("./orchestrator/orchestrator.ts").Orchestrator;
+  watcher: import("./workflow/watcher.ts").WorkflowWatcher;
+  dashboard: DashboardLike | null;
+  tokenStore: import("./metrics/token-store.ts").TokenStore;
+  logger: pino.Logger;
+}): void {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (deps.dashboard) deps.dashboard.stop();
+    deps.logger.info("Shutting down...");
+    deps.watcher.stop();
+    await deps.orchestrator.stop();
+    deps.tokenStore.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+// --- Orchestrator startup ---
+
+async function startOrchestrator(workflowPath: string | undefined, noTui: boolean): Promise<void> {
   const useTui = !noTui && process.stdout.isTTY && process.env.TERM !== "dumb";
   if (useTui) {
     process.env.SYMPHONY_LOG_DEST = "stderr";
   }
 
+  const { resolveWorkflowPath } = await import("./workflow/loader.ts");
+  const { logger, setLogFilePath, ensureLogDir } = await import("./logging/logger.ts");
   const { Orchestrator } = await import("./orchestrator/orchestrator.ts");
   const { WorkflowWatcher } = await import("./workflow/watcher.ts");
-  const { loadWorkflow, resolveWorkflowPath } = await import("./workflow/loader.ts");
-  const { MissingWorkflowFileError } = await import("./errors/errors.ts");
-  const { buildServiceConfig, validateDispatchConfig } = await import("./workflow/config.ts");
-  const { createTracker } = await import("./adapters/tracker/registry.ts");
-  const { createAgent } = await import("./adapters/agent/registry.ts");
-  const { WorkspaceManager } = await import("./workspace/manager.ts");
-  const { logger, setLogFilePath, ensureLogDir } = await import("./logging/logger.ts");
 
   const resolvedPath = resolveWorkflowPath(workflowPath);
-  const workflowDir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+  const workflowDir = dirname(resolvedPath);
 
   const logDir = ensureLogDir();
   setLogFilePath(`${logDir}/symphony.log`);
@@ -132,67 +241,24 @@ async function main() {
 
   logger.info({ path: resolvedPath }, "Starting Symphony service");
 
-  // Initial load
-  let workflow;
-  try {
-    workflow = loadWorkflow(resolvedPath);
-  } catch (err) {
-    if (err instanceof MissingWorkflowFileError) {
-      console.error(`Workflow file not found: ${resolvedPath}`);
-      console.error();
-      console.error("Run 'opensymphony init' to create one, or specify a path:");
-      console.error("  opensymphony /path/to/WORKFLOW.md");
-      process.exit(1);
-    }
-    throw err;
-  }
-  const config = buildServiceConfig(workflow.config, workflowDir);
-
-  // Validate
-  const validationError = validateDispatchConfig(config);
-  if (validationError) {
-    logger.fatal({ error: validationError }, "Startup validation failed");
-    process.exit(1);
-  }
-
-  // Create adapters
-  const tracker = createTracker(config.tracker.kind, config.tracker as unknown as Record<string, unknown>);
-  const agent = createAgent(config.agent.kind, config.agent.config as Record<string, unknown>);
-
-  // Create workspace manager
-  const workspaceManager = new WorkspaceManager({
-    root: config.workspace.root,
-    hooks: config.hooks,
-    sources: config.workspace.sources ?? [],
-    workflowDir: workflowDir,
-  });
-
-  const { TokenStore } = await import("./metrics/token-store.ts");
-  const { symphonyDb } = await import("./paths.ts");
-  const dbPath = symphonyDb();
-  const tokenStore = new TokenStore(dbPath);
-
-  const { ExecutionLog } = await import("./logging/execution-log.ts");
-  const executionLogPath = `${logDir}/.symphony-execution.jsonl`;
-  const executionLog = new ExecutionLog(executionLogPath);
+  // Load, validate, and create services
+  const workflow = await loadWorkflowOrExit(resolvedPath);
+  const config = await buildConfigAndValidate(workflow, workflowDir);
+  const services = await createServices(config, workflowDir, logDir);
 
   // Create orchestrator
   const orchestrator = new Orchestrator({
     config,
     workflow,
-    tracker,
-    agent,
-    workspaceManager,
-    tokenStore,
-    executionLog,
+    ...services,
   });
 
   // Dashboard (TUI mode)
-  let dashboard: { start(): void; stop(): void } | null = null;
+  let dashboard: DashboardLike | null = null;
   if (useTui) {
     const { Dashboard } = await import("./tui/dashboard.ts");
-    const trackerUrl = tracker.getDashboardUrl?.() ?? null;
-    dashboard = new Dashboard(orchestrator, tokenStore, trackerUrl);
+    const trackerUrl = services.tracker.getDashboardUrl?.() ?? null;
+    dashboard = new Dashboard(orchestrator, services.tokenStore, trackerUrl);
   }
 
   // Start workflow watcher
@@ -204,21 +270,7 @@ async function main() {
   });
 
   // Graceful shutdown
-  let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-
-    if (dashboard) dashboard.stop();
-    logger.info("Shutting down...");
-    watcher.stop();
-    await orchestrator.stop();
-    tokenStore.close();
-    process.exit(0);
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  setupGracefulShutdown({ orchestrator, watcher, dashboard, tokenStore: services.tokenStore, logger });
 
   // Start orchestrator
   await orchestrator.start();
@@ -229,7 +281,50 @@ async function main() {
   logger.info("Symphony service started");
 }
 
+// --- Entry point ---
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (args.unknownCommand) {
+    console.error(`Unknown command: ${args.unknownCommand}`);
+    console.error();
+    console.error(`Use '${BINARY_NAME} --help' to see available commands.`);
+    process.exit(1);
+  }
+
+  if (args.subcommand) {
+    await handleSubcommand(args.subcommand, args.positional, {
+      json: args.json,
+      stateFilter: args.stateFilter,
+      workflowPath: args.workflowPath,
+    });
+    return;
+  }
+
+  await startOrchestrator(args.workflowPath, args.noTui);
+}
+
+export function formatError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.stack ?? err.message;
+  }
+  if (typeof err === "string") {
+    return err;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch (_e) {
+    return String(err);
+  }
+}
+
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  console.error("Fatal error:", formatError(err));
   process.exit(1);
 });
