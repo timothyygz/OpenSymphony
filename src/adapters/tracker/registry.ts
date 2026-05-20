@@ -13,16 +13,25 @@ export interface TrackerMeta {
   category?: string;
 }
 
+export type TrackerValidateFn = (config: Record<string, unknown>) => string | null;
+
 interface TrackerEntry {
   factory: TrackerAdapterFactory;
   setupFn?: TrackerSetupFn;
   meta?: TrackerMeta;
+  validateFn?: TrackerValidateFn;
 }
 
 const trackers = new Map<string, TrackerEntry>();
 
-export function registerTracker(kind: string, factory: TrackerAdapterFactory, setupFn?: TrackerSetupFn, meta?: TrackerMeta): void {
-  trackers.set(kind, { factory, setupFn, meta });
+export function registerTracker(
+  kind: string,
+  factory: TrackerAdapterFactory,
+  setupFn?: TrackerSetupFn,
+  meta?: TrackerMeta,
+  validateFn?: TrackerValidateFn,
+): void {
+  trackers.set(kind, { factory, setupFn, meta, validateFn });
   logger.debug({ kind }, "Tracker adapter registered");
 }
 
@@ -32,6 +41,12 @@ export function createTracker(kind: string, config: Record<string, unknown>): Tr
     throw new Error(`Unknown tracker adapter: ${kind}. Available: ${[...trackers.keys()].join(", ")}`);
   }
   return entry.factory(config);
+}
+
+export function validateTrackerConfig(kind: string, config: Record<string, unknown>): string | null {
+  const entry = trackers.get(kind);
+  if (!entry?.validateFn) return null;
+  return entry.validateFn(config);
 }
 
 export function getTrackerSetup(kind: string): TrackerSetupFn | undefined {

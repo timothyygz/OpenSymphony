@@ -2,8 +2,8 @@ import { describe, test, expect } from "bun:test";
 import {
   extractSymphonyState,
   extractNonSymphonyLabels,
-  mapGitLabIssueToIssue,
-} from "../../src/adapters/tracker/gitlab-issues/mapper.ts";
+} from "../../src/adapters/tracker/label-based/common.ts";
+import { mapGitLabIssueToIssue } from "../../src/adapters/tracker/gitlab-issues/mapper.ts";
 import type { GitLabIssueResponse } from "../../src/adapters/tracker/gitlab-issues/api.ts";
 
 function makeGitLabIssue(overrides: Partial<GitLabIssueResponse> = {}): GitLabIssueResponse {
@@ -25,34 +25,34 @@ function makeGitLabIssue(overrides: Partial<GitLabIssueResponse> = {}): GitLabIs
 
 describe("extractSymphonyState", () => {
   test("extracts state from symphony label", () => {
-    expect(extractSymphonyState(["symphony::Todo", "bug"], "opened")).toBe("Todo");
+    expect(extractSymphonyState(["symphony::Todo", "bug"], "symphony::", "opened")).toBe("Todo");
   });
 
   test("extracts state from label with spaces", () => {
-    expect(extractSymphonyState(["symphony::In Progress"], "opened")).toBe("In Progress");
+    expect(extractSymphonyState(["symphony::In Progress"], "symphony::", "opened")).toBe("In Progress");
   });
 
   test("returns fallback when no symphony label", () => {
-    expect(extractSymphonyState(["bug", "feature"], "opened")).toBe("opened");
+    expect(extractSymphonyState(["bug", "feature"], "symphony::", "opened")).toBe("opened");
   });
 
   test("returns fallback when labels empty", () => {
-    expect(extractSymphonyState([], "closed")).toBe("closed");
+    expect(extractSymphonyState([], "symphony::", "closed")).toBe("closed");
   });
 });
 
 describe("extractNonSymphonyLabels", () => {
   test("filters out symphony labels", () => {
-    expect(extractNonSymphonyLabels(["symphony::Todo", "bug", "feature"]))
+    expect(extractNonSymphonyLabels(["symphony::Todo", "bug", "feature"], "symphony::"))
       .toEqual(["bug", "feature"]);
   });
 
   test("returns all labels when none are symphony", () => {
-    expect(extractNonSymphonyLabels(["bug", "feature"])).toEqual(["bug", "feature"]);
+    expect(extractNonSymphonyLabels(["bug", "feature"], "symphony::")).toEqual(["bug", "feature"]);
   });
 
   test("returns empty when all are symphony", () => {
-    expect(extractNonSymphonyLabels(["symphony::Todo", "symphony::Done"])).toEqual([]);
+    expect(extractNonSymphonyLabels(["symphony::Todo", "symphony::Done"], "symphony::")).toEqual([]);
   });
 });
 

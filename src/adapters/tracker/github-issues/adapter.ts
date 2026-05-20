@@ -1,12 +1,18 @@
-import type { TrackerAdapter, CreateIssueData, HealthCheckResult } from "../types.ts";
+import type { TrackerAdapter, CreateIssueData } from "../types.ts";
 import type { Issue, TokenUsage } from "../../../model/index.ts";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { GitHubApi } from "./api.ts";
-import { mapGitHubIssueToIssue, extractSymphonyState, extractNonSymphonyLabels } from "./mapper.ts";
-import { logger } from "../../../logging/logger.ts";
+import { mapGitHubIssueToIssue } from "./mapper.ts";
 import { createTrackerMcpServer } from "../../agent/claude-code/tracker-tools.ts";
-
-export const SYMPHONY_LABEL_PREFIX = "symphony::";
+import {
+  SYMPHONY_LABEL_PREFIX,
+  fetchIssuesByLabelStates,
+  fetchIssuesByIds,
+  updateLabelState,
+  updateBodyMetadata,
+  updateTokens,
+  healthCheckSequence,
+} from "../label-based/common.ts";
 
 export interface GitHubIssuesConfig {
   host: string;
@@ -42,84 +48,85 @@ export class GitHubIssuesAdapter implements TrackerAdapter {
   }
 
   async fetchIssuesByStates(states: string[]): Promise<Issue[]> {
-    if (states.length === 0) return [];
-    if (states.length === 1 && states[0] === "*") {
-      const issues = await this.api.listIssues({ state: "open", per_page: "100" });
-      return issues.map(mapGitHubIssueToIssue);
-    }
-    const seen = new Set<number>();
-    const results: Issue[] = [];
-    for (const state of states) {
-      const label = `${this.labelPrefix}${state}`;
-      const issues = await this.api.listIssues({ labels: label, state: "open", per_page: "100" });
-      for (const issue of issues) {
-        if (!seen.has(issue.id)) {
-          seen.add(issue.id);
-          results.push(mapGitHubIssueToIssue(issue));
-        }
-      }
-    }
-    return results;
+    return fetchIssuesByLabelStates({
+      states,
+      labelPrefix: this.labelPrefix,
+      listFn: (params) => this.api.listIssues(params),
+      mapFn: mapGitHubIssueToIssue,
+      openStateValue: "open",
+    });
   }
 
   async fetchIssueStatesByIds(ids: string[]): Promise<Issue[]> {
-    if (ids.length === 0) return [];
-    const results: Issue[] = [];
-    for (const id of ids) {
-      try {
-        const issue = await this.api.getIssue(Number(id));
-        results.push(mapGitHubIssueToIssue(issue));
-      } catch (err) {
-        logger.warn({ issueId: id, error: String(err) }, "Failed to fetch GitHub issue");
-      }
-    }
-    return results;
+    return fetchIssuesByIds({
+      ids,
+      getFn: (id) => this.api.getIssue(id),
+      mapFn: mapGitHubIssueToIssue,
+      kind: "GitHub",
+    });
   }
 
   async updateIssueState(issueId: string, state: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const nonSymphonyLabels = extractNonSymphonyLabels(issue.labels);
-    const newLabel = `${this.labelPrefix}${state}`;
-    const labels = [...nonSymphonyLabels, newLabel];
-
-    await this.api.updateIssue(Number(issueId), { labels });
-    logger.info({ issueId, state }, "Updated issue state in GitHub tracker");
+    return updateLabelState({
+      issueId,
+      state,
+      labelPrefix: this.labelPrefix,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getLabels: (raw) => raw.labels.map((l: { name: string }) => l.name),
+      buildLabelsParam: (labels) => labels,
+    });
   }
 
   async updateIssueTokens(issueId: string, tokens: TokenUsage): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const tokenMarker = `<!-- symphony-tokens: ${JSON.stringify(tokens)} -->`;
-    const body = issue.body ?? "";
-    const cleaned = body.replace(/<!-- symphony-tokens: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { body: `${cleaned}\n\n${tokenMarker}` });
-    logger.info({ issueId, totalTokens: tokens.totalTokens }, "Updated issue tokens in GitHub tracker");
+    return updateTokens({
+      issueId,
+      tokens,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.body,
+      buildBodyParam: (body) => body,
+      kind: "GitHub",
+    });
   }
 
   async updateIssueJoinCommand(issueId: string, command: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const marker = `<!-- symphony-join: ${command} -->`;
-    const body = issue.body ?? "";
-    const cleaned = body.replace(/<!-- symphony-join: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { body: `${cleaned}\n\n${marker}` });
-    logger.info({ issueId }, "Updated issue join command in GitHub tracker");
+    return updateBodyMetadata({
+      issueId,
+      metadataKey: "join",
+      value: command,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.body,
+      buildBodyParam: (body) => body,
+      kind: "GitHub",
+    });
   }
 
   async updateIssueProgress(issueId: string, progress: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const marker = `<!-- symphony-progress: ${progress} -->`;
-    const body = issue.body ?? "";
-    const cleaned = body.replace(/<!-- symphony-progress: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { body: `${cleaned}\n\n${marker}` });
-    logger.info({ issueId, progress }, "Updated issue progress in GitHub tracker");
+    return updateBodyMetadata({
+      issueId,
+      metadataKey: "progress",
+      value: progress,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.body,
+      buildBodyParam: (body) => body,
+      kind: "GitHub",
+    });
   }
 
   async updateIssueResultSummary(issueId: string, summary: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const marker = `<!-- symphony-result: ${summary} -->`;
-    const body = issue.body ?? "";
-    const cleaned = body.replace(/<!-- symphony-result: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { body: `${cleaned}\n\n${marker}` });
-    logger.info({ issueId }, "Updated issue result summary in GitHub tracker");
+    return updateBodyMetadata({
+      issueId,
+      metadataKey: "result",
+      value: summary,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.body,
+      buildBodyParam: (body) => body,
+      kind: "GitHub",
+    });
   }
 
   getMcpServerConfig(issueId: string): Record<string, McpServerConfig> {
@@ -143,25 +150,13 @@ export class GitHubIssuesAdapter implements TrackerAdapter {
     return issues.map(mapGitHubIssueToIssue);
   }
 
-  async healthCheck(): Promise<HealthCheckResult[]> {
-    const results: HealthCheckResult[] = [];
-
-    try {
-      const repo = await this.api.testConnection();
-      results.push({ name: "GitHub connectivity", status: "pass", message: `Connected to ${repo.name}` });
-    } catch (err) {
-      results.push({ name: "GitHub connectivity", status: "fail", message: err instanceof Error ? err.message : String(err) });
-      return results;
-    }
-
-    try {
-      await this.api.listIssues({ per_page: "1" });
-      results.push({ name: "GitHub repo access", status: "pass", message: "Can list issues" });
-    } catch (err) {
-      results.push({ name: "GitHub repo access", status: "fail", message: err instanceof Error ? err.message : String(err) });
-    }
-
-    return results;
+  async healthCheck() {
+    return healthCheckSequence({
+      connectionTestFn: () => this.api.testConnection(),
+      listFn: (params) => this.api.listIssues(params),
+      connectivityName: "GitHub connectivity",
+      accessName: "GitHub repo access",
+    });
   }
 
   getDashboardUrl(): string | null {

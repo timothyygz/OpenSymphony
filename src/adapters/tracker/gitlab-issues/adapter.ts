@@ -1,12 +1,18 @@
-import type { TrackerAdapter, CreateIssueData, HealthCheckResult } from "../types.ts";
+import type { TrackerAdapter, CreateIssueData } from "../types.ts";
 import type { Issue, TokenUsage } from "../../../model/index.ts";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { GitLabApi } from "./api.ts";
-import { mapGitLabIssueToIssue, extractSymphonyState, extractNonSymphonyLabels } from "./mapper.ts";
-import { logger } from "../../../logging/logger.ts";
+import { mapGitLabIssueToIssue } from "./mapper.ts";
 import { createTrackerMcpServer } from "../../agent/claude-code/tracker-tools.ts";
-
-const SYMPHONY_LABEL_PREFIX = "symphony::";
+import {
+  SYMPHONY_LABEL_PREFIX,
+  fetchIssuesByLabelStates,
+  fetchIssuesByIds,
+  updateLabelState,
+  updateBodyMetadata,
+  updateTokens,
+  healthCheckSequence,
+} from "../label-based/common.ts";
 
 export interface GitLabIssuesConfig {
   host: string;
@@ -40,86 +46,85 @@ export class GitLabIssuesAdapter implements TrackerAdapter {
   }
 
   async fetchIssuesByStates(states: string[]): Promise<Issue[]> {
-    if (states.length === 0) return [];
-    if (states.length === 1 && states[0] === "*") {
-      const issues = await this.api.listIssues({ state: "opened", per_page: "100" });
-      return issues.map(mapGitLabIssueToIssue);
-    }
-    // GitLab API treats comma-separated labels as AND, but we need OR.
-    // Query each state label separately and deduplicate by issue id.
-    const seen = new Set<number>();
-    const results: Issue[] = [];
-    for (const state of states) {
-      const label = `${this.labelPrefix}${state}`;
-      const issues = await this.api.listIssues({ labels: label, state: "opened", per_page: "100" });
-      for (const issue of issues) {
-        if (!seen.has(issue.id)) {
-          seen.add(issue.id);
-          results.push(mapGitLabIssueToIssue(issue));
-        }
-      }
-    }
-    return results;
+    return fetchIssuesByLabelStates({
+      states,
+      labelPrefix: this.labelPrefix,
+      listFn: (params) => this.api.listIssues(params),
+      mapFn: mapGitLabIssueToIssue,
+      openStateValue: "opened",
+    });
   }
 
   async fetchIssueStatesByIds(ids: string[]): Promise<Issue[]> {
-    if (ids.length === 0) return [];
-    const results: Issue[] = [];
-    for (const id of ids) {
-      try {
-        const issue = await this.api.getIssue(Number(id));
-        results.push(mapGitLabIssueToIssue(issue));
-      } catch (err) {
-        logger.warn({ issueId: id, error: String(err) }, "Failed to fetch GitLab issue");
-      }
-    }
-    return results;
+    return fetchIssuesByIds({
+      ids,
+      getFn: (id) => this.api.getIssue(id),
+      mapFn: mapGitLabIssueToIssue,
+      kind: "GitLab",
+    });
   }
 
   async updateIssueState(issueId: string, state: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const nonSymphonyLabels = extractNonSymphonyLabels(issue.labels);
-    const newLabel = `${this.labelPrefix}${state}`;
-    const labels = [...nonSymphonyLabels, newLabel];
-
-    await this.api.updateIssue(Number(issueId), { labels: labels.join(",") });
-    logger.info({ issueId, state }, "Updated issue state in GitLab tracker");
+    return updateLabelState({
+      issueId,
+      state,
+      labelPrefix: this.labelPrefix,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getLabels: (raw) => raw.labels,
+      buildLabelsParam: (labels) => labels.join(","),
+    });
   }
 
   async updateIssueTokens(issueId: string, tokens: TokenUsage): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const tokenMarker = `<!-- symphony-tokens: ${JSON.stringify(tokens)} -->`;
-    const desc = issue.description ?? "";
-    const cleaned = desc.replace(/<!-- symphony-tokens: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { description: `${cleaned}\n\n${tokenMarker}` });
-    logger.info({ issueId, totalTokens: tokens.totalTokens }, "Updated issue tokens in GitLab tracker");
+    return updateTokens({
+      issueId,
+      tokens,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.description,
+      buildBodyParam: (body) => body,
+      kind: "GitLab",
+    });
   }
 
   async updateIssueJoinCommand(issueId: string, command: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const marker = `<!-- symphony-join: ${command} -->`;
-    const desc = issue.description ?? "";
-    const cleaned = desc.replace(/<!-- symphony-join: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { description: `${cleaned}\n\n${marker}` });
-    logger.info({ issueId }, "Updated issue join command in GitLab tracker");
+    return updateBodyMetadata({
+      issueId,
+      metadataKey: "join",
+      value: command,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.description,
+      buildBodyParam: (body) => body,
+      kind: "GitLab",
+    });
   }
 
   async updateIssueProgress(issueId: string, progress: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const marker = `<!-- symphony-progress: ${progress} -->`;
-    const desc = issue.description ?? "";
-    const cleaned = desc.replace(/<!-- symphony-progress: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { description: `${cleaned}\n\n${marker}` });
-    logger.info({ issueId, progress }, "Updated issue progress in GitLab tracker");
+    return updateBodyMetadata({
+      issueId,
+      metadataKey: "progress",
+      value: progress,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.description,
+      buildBodyParam: (body) => body,
+      kind: "GitLab",
+    });
   }
 
   async updateIssueResultSummary(issueId: string, summary: string): Promise<void> {
-    const issue = await this.api.getIssue(Number(issueId));
-    const marker = `<!-- symphony-result: ${summary} -->`;
-    const desc = issue.description ?? "";
-    const cleaned = desc.replace(/<!-- symphony-result: .*? -->/g, "").trimEnd();
-    await this.api.updateIssue(Number(issueId), { description: `${cleaned}\n\n${marker}` });
-    logger.info({ issueId }, "Updated issue result summary in GitLab tracker");
+    return updateBodyMetadata({
+      issueId,
+      metadataKey: "result",
+      value: summary,
+      getFn: (id) => this.api.getIssue(id),
+      updateFn: (id, data) => this.api.updateIssue(id, data),
+      getBody: (raw) => raw.description,
+      buildBodyParam: (body) => body,
+      kind: "GitLab",
+    });
   }
 
   getMcpServerConfig(issueId: string): Record<string, McpServerConfig> {
@@ -143,25 +148,13 @@ export class GitLabIssuesAdapter implements TrackerAdapter {
     return issues.map(mapGitLabIssueToIssue);
   }
 
-  async healthCheck(): Promise<HealthCheckResult[]> {
-    const results: HealthCheckResult[] = [];
-
-    try {
-      const project = await this.api.testConnection();
-      results.push({ name: "GitLab connectivity", status: "pass", message: `Connected to ${project.name}` });
-    } catch (err) {
-      results.push({ name: "GitLab connectivity", status: "fail", message: err instanceof Error ? err.message : String(err) });
-      return results;
-    }
-
-    try {
-      await this.api.listIssues({ per_page: "1" });
-      results.push({ name: "GitLab project access", status: "pass", message: "Can list issues" });
-    } catch (err) {
-      results.push({ name: "GitLab project access", status: "fail", message: err instanceof Error ? err.message : String(err) });
-    }
-
-    return results;
+  async healthCheck() {
+    return healthCheckSequence({
+      connectionTestFn: () => this.api.testConnection(),
+      listFn: (params) => this.api.listIssues(params),
+      connectivityName: "GitLab connectivity",
+      accessName: "GitLab project access",
+    });
   }
 
   getDashboardUrl(): string | null {

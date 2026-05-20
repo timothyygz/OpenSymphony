@@ -2,13 +2,7 @@ import { registerTracker } from "../registry.ts";
 import type { TrackerSetupFn } from "../../setup/types.ts";
 import { createGitHubIssuesAdapter } from "./adapter.ts";
 import { GitHubApi } from "./api.ts";
-
-const SYMPHONY_LABELS = [
-  { name: "symphony::Todo", color: "0075ca" },
-  { name: "symphony::In Progress", color: "fbca04" },
-  { name: "symphony::Done", color: "0e8a16" },
-  { name: "symphony::Cancelled", color: "b60205" },
-];
+import { DEFAULT_SYMPHONY_LABELS } from "../label-based/common.ts";
 
 export const githubSetup: TrackerSetupFn = async (ctx) => {
   const p = ctx.prompts;
@@ -86,7 +80,7 @@ export const githubSetup: TrackerSetupFn = async (ctx) => {
     const ls = p.spinner();
     ls.start("Creating symphony labels...");
     let created = 0;
-    for (const label of SYMPHONY_LABELS) {
+    for (const label of DEFAULT_SYMPHONY_LABELS) {
       try {
         await api.createLabel(label.name, label.color);
         created++;
@@ -125,8 +119,16 @@ export const githubSetup: TrackerSetupFn = async (ctx) => {
   };
 };
 
+function validateGitHubConfig(config: Record<string, unknown>): string | null {
+  if (!config.github_host) return "tracker.github_host is required for github_issues";
+  if (!config.github_token) return "tracker.github_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITHUB_TOKEN)";
+  if (!config.owner) return "tracker.owner is required for github_issues";
+  if (!config.repo) return "tracker.repo is required for github_issues";
+  return null;
+}
+
 registerTracker("github_issues", createGitHubIssuesAdapter, githubSetup, {
   label: "GitHub Issues",
   description: "使用 GitHub Issues 和标签管理任务状态",
   category: "git-hosting",
-});
+}, validateGitHubConfig);

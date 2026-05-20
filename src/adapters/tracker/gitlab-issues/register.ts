@@ -2,13 +2,7 @@ import { registerTracker } from "../registry.ts";
 import type { TrackerSetupFn } from "../../setup/types.ts";
 import { createGitLabIssuesAdapter } from "./adapter.ts";
 import { GitLabApi } from "./api.ts";
-
-const SYMPHONY_LABELS = [
-  { name: "symphony::Todo", color: "#428BCA" },
-  { name: "symphony::In Progress", color: "#F0AD4E" },
-  { name: "symphony::Done", color: "#5CB85C" },
-  { name: "symphony::Cancelled", color: "#D9534F" },
-];
+import { DEFAULT_SYMPHONY_LABELS } from "../label-based/common.ts";
 
 export const gitlabSetup: TrackerSetupFn = async (ctx) => {
   const p = ctx.prompts;
@@ -75,7 +69,7 @@ export const gitlabSetup: TrackerSetupFn = async (ctx) => {
     const ls = p.spinner();
     ls.start("Creating symphony labels...");
     let created = 0;
-    for (const label of SYMPHONY_LABELS) {
+    for (const label of DEFAULT_SYMPHONY_LABELS) {
       try {
         await api.createLabel(label.name, label.color);
         created++;
@@ -113,8 +107,15 @@ export const gitlabSetup: TrackerSetupFn = async (ctx) => {
   };
 };
 
+function validateGitLabConfig(config: Record<string, unknown>): string | null {
+  if (!config.gitlab_host) return "tracker.gitlab_host is required for gitlab_issues";
+  if (!config.gitlab_token) return "tracker.gitlab_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITLAB_TOKEN)";
+  if (!config.project_id) return "tracker.project_id is required for gitlab_issues";
+  return null;
+}
+
 registerTracker("gitlab_issues", createGitLabIssuesAdapter, gitlabSetup, {
   label: "GitLab Issues",
   description: "使用 GitLab Issues 和标签管理任务状态",
   category: "git-hosting",
-});
+}, validateGitLabConfig);

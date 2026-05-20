@@ -287,9 +287,20 @@ export const feishuBitableSetup: TrackerSetupFn = async (ctx) => {
   };
 };
 
+function validateFeishuBitableConfig(config: Record<string, unknown>): string | null {
+  if (!config.app_token) return "tracker.app_token is required (set in WORKFLOW.md or ~/.open-symphony/settings.json)";
+  if (!config.table_id) return "tracker.table_id is required (set in WORKFLOW.md or ~/.open-symphony/settings.json)";
+  if (!config.app_id) return "tracker.app_id is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $FEISHU_APP_ID)";
+  if (!config.app_secret) return "tracker.app_secret is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $FEISHU_APP_SECRET)";
+  if (!config.state_field) return "tracker.state_field is required for feishu_bitable";
+  if (!config.identifier_field) return "tracker.identifier_field is required for feishu_bitable";
+  if (!config.title_field) return "tracker.title_field is required for feishu_bitable";
+  return null;
+}
+
 registerTracker("feishu_bitable", createFeishuBitableAdapter, feishuBitableSetup, {
   label: "飞书多维表格 (Feishu Bitable)",
   description: "使用飞书多维表格作为看板，可视化任务管理",
   recommended: true,
   category: "feishu",
-});
+}, validateFeishuBitableConfig);

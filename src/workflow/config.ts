@@ -5,6 +5,7 @@ import { symphonySettings } from "../paths.ts";
 import { serviceConfigSchema, type ServiceConfig } from "../model/index.ts";
 import { ConfigValidationError } from "../errors/errors.ts";
 import { logger } from "../logging/logger.ts";
+import { validateTrackerConfig } from "../adapters/tracker/registry.ts";
 
 interface GlobalSettings {
   tracker?: {
@@ -152,31 +153,8 @@ export function validateDispatchConfig(config: ServiceConfig): string | null {
   if (!config.tracker.kind) {
     return "tracker.kind is required";
   }
-  if (config.tracker.kind === "feishu_bitable") {
-    if (!config.tracker.app_token) return "tracker.app_token is required (set in WORKFLOW.md or ~/.open-symphony/settings.json)";
-    if (!config.tracker.table_id) return "tracker.table_id is required (set in WORKFLOW.md or ~/.open-symphony/settings.json)";
-    if (!config.tracker.app_id) return "tracker.app_id is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $FEISHU_APP_ID)";
-    if (!config.tracker.app_secret) return "tracker.app_secret is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $FEISHU_APP_SECRET)";
-    if (!config.tracker.state_field) return "tracker.state_field is required for feishu_bitable";
-    if (!config.tracker.identifier_field) return "tracker.identifier_field is required for feishu_bitable";
-    if (!config.tracker.title_field) return "tracker.title_field is required for feishu_bitable";
-  }
-  if (config.tracker.kind === "linear") {
-    if (!config.tracker.api_key) return "tracker.api_key ($LINEAR_API_KEY) is required";
-    if (!config.tracker.project_slug) return "tracker.project_slug is required for linear";
-  }
-  if (config.tracker.kind === "gitlab_issues") {
-    if (!config.tracker.gitlab_host) return "tracker.gitlab_host is required for gitlab_issues";
-    if (!config.tracker.gitlab_token) return "tracker.gitlab_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITLAB_TOKEN)";
-    if (!config.tracker.project_id) return "tracker.project_id is required for gitlab_issues";
-  }
-  if (config.tracker.kind === "github_issues") {
-    if (!config.tracker.github_host) return "tracker.github_host is required for github_issues";
-    if (!config.tracker.github_token) return "tracker.github_token is required (set in WORKFLOW.md, ~/.open-symphony/settings.json, or $GITHUB_TOKEN)";
-    if (!config.tracker.owner) return "tracker.owner is required for github_issues";
-    if (!config.tracker.repo) return "tracker.repo is required for github_issues";
-  }
-  // Check agent kind is specified
+  const trackerError = validateTrackerConfig(config.tracker.kind, config.tracker as unknown as Record<string, unknown>);
+  if (trackerError) return trackerError;
   if (!config.agent.kind) return "agent.kind is required";
   return null;
 }

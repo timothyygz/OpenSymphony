@@ -23,7 +23,8 @@
 import { loadWorkflow, resolveWorkflowPath } from "../src/workflow/loader.ts";
 import { resolveEnvValue } from "../src/workflow/config.ts";
 import { GitLabApi, type GitLabIssueResponse } from "../src/adapters/tracker/gitlab-issues/api.ts";
-import { mapGitLabIssueToIssue, extractSymphonyState, extractNonSymphonyLabels } from "../src/adapters/tracker/gitlab-issues/mapper.ts";
+import { mapGitLabIssueToIssue } from "../src/adapters/tracker/gitlab-issues/mapper.ts";
+import { extractSymphonyState, extractNonSymphonyLabels } from "../src/adapters/tracker/label-based/common.ts";
 import type { Issue } from "../src/model/issue.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -190,7 +191,7 @@ async function cmdShow(api: GitLabApi, iid: string) {
 
 async function cmdState(config: TrackerConfig, api: GitLabApi, iid: string, newState: string) {
   const raw = await api.getIssue(Number(iid));
-  const nonSymphonyLabels = extractNonSymphonyLabels(raw.labels);
+  const nonSymphonyLabels = extractNonSymphonyLabels(raw.labels, config.label_prefix);
   const newLabel = `${config.label_prefix}${newState}`;
   const labels = [...nonSymphonyLabels, newLabel];
 
